@@ -7,6 +7,8 @@
 pub mod cli;
 /// One module per subcommand.
 pub mod commands;
+/// Focused contract context for one change.
+pub mod context;
 /// Embedded pack and repository installation.
 pub mod install;
 /// Shared origin for captured changes.
