@@ -17,6 +17,8 @@ pub mod install;
 pub mod provenance;
 /// Reviewable migration reports from validated state.
 pub mod report;
+/// Tag history walk that ranks candidate upgrade pairs.
+pub mod scan;
 /// Versioned state files for the state tree.
 pub mod state;
 /// Fixture server pieces for contract-sensitive behaviour.
