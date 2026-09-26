@@ -276,6 +276,7 @@ pub fn find_pair(root: &Path, old_full: &str, new_full: &str) -> anyhow::Result<
 pub fn check_pair_identity(pair: &Path, old_full: &str, new_full: &str) -> anyhow::Result<()> {
     let file = pair_file(pair);
     let stored: super::PairFile = super::read_state_file(&file)?;
+    stored.validate()?;
     if stored.old_spec_hash != old_full || stored.new_spec_hash != new_full {
         anyhow::bail!(
             "pair directory {} stores a different spec pair in {}",
@@ -309,6 +310,7 @@ pub fn find_capture(pair: &Path, wanted: &str) -> anyhow::Result<Option<PathBuf>
 pub fn check_capture_identity(capture: &Path, capture_id: &str) -> anyhow::Result<()> {
     let file = capture_file(capture);
     let stored: super::CaptureFile = super::read_state_file(&file)?;
+    stored.validate()?;
     if stored.capture_id != capture_id {
         anyhow::bail!(
             "capture directory {} stores a different capture in {}",
@@ -342,6 +344,7 @@ pub fn find_migration(root: &Path, wanted: &str) -> anyhow::Result<Option<PathBu
 pub fn check_manifest_identity(migration: &Path, attempt_id: &str) -> anyhow::Result<()> {
     let file = manifest_path(migration);
     let stored: super::MigrationManifest = super::read_state_file(&file)?;
+    stored.validate()?;
     if stored.attempt_id != attempt_id {
         anyhow::bail!(
             "migration directory {} stores a different attempt in {}",
@@ -394,6 +397,9 @@ fn unique_match(
     kind: &str,
     dir: &Path,
 ) -> anyhow::Result<Option<String>> {
+    if wanted.is_empty() {
+        anyhow::bail!("{kind} lookup needs a non-empty id or prefix");
+    }
     if names.iter().any(|name| name.as_str() == wanted) {
         return Ok(Some(wanted.to_string()));
     }

@@ -336,3 +336,54 @@ fn migration_subpaths_cover_expected_tree() {
     );
     assert_eq!(layout::reports_dir(&dir), dir.join("reports"));
 }
+
+#[test]
+fn pair_lookup_rejects_unknown_schema_version() {
+    let root = temp_root();
+    let state_root = state_root_for(&root);
+    let old = full_hash("0123456789ab", 'a');
+    let new = full_hash("cdef01234567", 'c');
+    let dir = write_pair(&state_root, &old, &new);
+    let raw = format!(
+        "{{\"schema_version\":999,\"old_spec_hash\":\"{old}\",\"new_spec_hash\":\"{new}\"}}"
+    );
+    atomic::write_atomic(&layout::pair_file(&dir), raw.as_bytes()).unwrap();
+    assert!(layout::find_pair(&state_root, &old, &new).is_err());
+}
+
+#[test]
+fn capture_lookup_rejects_unknown_schema_version() {
+    let root = temp_root();
+    let state_root = state_root_for(&root);
+    let old = full_hash("0123456789ab", 'a');
+    let new = full_hash("cdef01234567", 'c');
+    let pair = write_pair(&state_root, &old, &new);
+    let capture = write_capture(&pair, "capture-versioned");
+    let raw = "{\"schema_version\":999,\"capture_id\":\"capture-versioned\"}";
+    atomic::write_atomic(&layout::capture_file(&capture), raw.as_bytes()).unwrap();
+    assert!(layout::find_capture(&pair, "capture-versioned").is_err());
+}
+
+#[test]
+fn migration_lookup_rejects_unknown_schema_version() {
+    let root = temp_root();
+    let state_root = state_root_for(&root);
+    let old = full_hash("111111111111", '1');
+    let new = full_hash("222222222222", '2');
+    let dir = write_manifest(&state_root, "attempt-versioned", &old, &new);
+    let raw = format!(
+        "{{\"schema_version\":999,\"attempt_id\":\"attempt-versioned\",\"old_spec_hash\":\"{old}\",\"new_spec_hash\":\"{new}\"}}"
+    );
+    atomic::write_atomic(&layout::manifest_path(&dir), raw.as_bytes()).unwrap();
+    assert!(layout::find_migration(&state_root, "attempt-versioned").is_err());
+}
+
+#[test]
+fn migration_lookup_rejects_empty_input() {
+    let root = temp_root();
+    let state_root = state_root_for(&root);
+    let old = full_hash("111111111111", '1');
+    let new = full_hash("222222222222", '2');
+    write_manifest(&state_root, "attempt-solo-empty", &old, &new);
+    assert!(layout::find_migration(&state_root, "").is_err());
+}
