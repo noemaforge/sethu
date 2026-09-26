@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use serde_json::{Value, json};
 use sethu::state::attempt::AttemptRecord;
 use sethu::state::layout;
 use sethu::state::ledger::{Ledger, Outcome};
@@ -156,12 +157,13 @@ fn write_repo_file(setup: &Setup, name: &str, body: &str) -> String {
 }
 
 #[test]
-fn fixed_and_verified_is_refused_without_a_runner() {
-    if !need_vimanam("fixed_and_verified_is_refused_without_a_runner") {
+fn fixed_and_verified_is_refused_without_a_stored_run() {
+    if !need_vimanam("fixed_and_verified_is_refused_without_a_stored_run") {
         return;
     }
     let setup = setup();
-    let notes = write_repo_file(&setup, "verify-notes.md", "checked\n");
+    let file = write_repo_file(&setup, "app/search.ts", "export {};\n");
+    let location = format!("{file}:3");
 
     record_cmd(
         &setup.repo,
@@ -170,18 +172,386 @@ fn fixed_and_verified_is_refused_without_a_runner() {
             "--outcome",
             "fixed_and_verified",
             "--evidence",
-            &format!("run:smoke-{notes}"),
+            "run:run-ghost/picker",
             "--evidence",
-            &notes,
-            "--note",
-            "patched the picker",
+            &location,
         ],
     )
     .assert()
     .failure()
     .code(1)
-    .stderr(predicate::str::contains("verification runner"))
-    .stderr(predicate::str::contains("has not landed"))
+    .stderr(predicate::str::contains("no stored run"))
+    .stderr(predicate::str::contains("run-ghost"))
+    .stdout(predicate::str::is_empty());
+    assert!(!layout::ledger_path(&setup.migration).exists());
+}
+
+/// Read the consumer HEAD of a setup repository.
+fn head_commit(repo: &Path) -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// One asset body that validates under both pinned specs.
+fn stored_asset(id: &str, index: usize) -> Value {
+    json!({
+        "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+        "deviceAssetId": format!("device-{index}"),
+        "deviceId": "device-1",
+        "duration": "0:00:01.000000",
+        "fileCreatedAt": "2024-09-27T10:00:00.000Z",
+        "fileModifiedAt": "2024-09-27T10:00:00.000Z",
+        "hasMetadata": true,
+        "id": id,
+        "isArchived": false,
+        "isFavorite": false,
+        "isOffline": false,
+        "isTrashed": false,
+        "localDateTime": "2024-09-27T10:00:00.000Z",
+        "originalFileName": format!("photo-{index}.jpg"),
+        "originalPath": format!("/photos/photo-{index}.jpg"),
+        "ownerId": "550e8400-e29b-41d4-a716-446655440001",
+        "thumbhash": "3OcRJwh4d3h6eIeIh3h2e3h4gQ",
+        "type": "IMAGE",
+        "updatedAt": "2024-09-27T10:00:00.000Z",
+        "stack": null
+    })
+}
+
+/// Old-contract search response holding two assets.
+fn stored_old_body() -> Value {
+    let items: Vec<Value> = ["asset-r1", "asset-r2"]
+        .iter()
+        .enumerate()
+        .map(|(index, id)| stored_asset(id, index))
+        .collect();
+    json!({
+        "albums": {"count": 0, "facets": [], "items": [], "total": 0},
+        "assets": {
+            "count": items.len(),
+            "facets": [],
+            "items": items,
+            "nextPage": null,
+            "total": items.len()
+        }
+    })
+}
+
+/// New-contract random response holding two assets.
+fn stored_new_body() -> Value {
+    Value::Array(
+        ["asset-r1", "asset-r2"]
+            .iter()
+            .enumerate()
+            .map(|(index, id)| stored_asset(id, index))
+            .collect(),
+    )
+}
+
+/// Write scenario directories with one valid random-search fixture each.
+fn write_stored_scenarios(area: &Path, old_hash: &str, new_hash: &str) -> (PathBuf, PathBuf) {
+    let old = area.join("scenarios-old");
+    let next = area.join("scenarios-new");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&next).unwrap();
+    for (dir, hash, body) in [
+        (&old, old_hash, stored_old_body()),
+        (&next, new_hash, stored_new_body()),
+    ] {
+        let scenario = json!({
+            "id": "random-search",
+            "change_ids": ["vc1_demo"],
+            "spec_sha256": hash,
+            "request": {"method": "POST", "path": "/search/random"},
+            "response": {"status": 200, "body": body}
+        });
+        std::fs::write(
+            dir.join("random.json"),
+            serde_json::to_vec_pretty(&scenario).unwrap(),
+        )
+        .unwrap();
+    }
+    (old, next)
+}
+
+/// One trace line for a served random-search exchange.
+fn stored_trace_line(body: &Value) -> String {
+    let bytes = serde_json::to_vec(body).unwrap();
+    String::from_utf8(
+        serde_json::to_vec(&json!({
+            "scenario_id": "random-search",
+            "method": "POST",
+            "path": "/search/random",
+            "request_valid": true,
+            "request_detail": "body matches the contract schema",
+            "response_status": 200,
+            "response_body_sha256": sethu::stub::body_sha256_hex(&bytes),
+            "response_written": true
+        }))
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+/// Write one fabricated verified run under a migration.
+///
+/// The run record names one regression check covering `covered`. Every
+/// stage carries a passing verdict with a clean trace, and the patched
+/// stage ran on `head`.
+#[allow(clippy::too_many_arguments)]
+fn write_stored_run(
+    migration: &Path,
+    run_id: &str,
+    head: &str,
+    old_hash: &str,
+    new_hash: &str,
+    scenarios_old: &Path,
+    scenarios_new: &Path,
+    covered: &[String],
+) {
+    let run_dir = migration.join("runs").join(run_id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let record = json!({
+        "run_id": run_id,
+        "harness_hash": "abc",
+        "harness_changed": false,
+        "sethu_version": "0.1.0",
+        "nextest_version": "nextest",
+        "checks": [
+            {"name": "random-picker", "role": "regression",
+             "change_ids": covered, "verified": true, "stages": []}
+        ]
+    });
+    std::fs::write(
+        run_dir.join("run.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    for (stage, commit, spec, spec_hash, scenarios, body, verdict) in [
+        (
+            "original-old",
+            "baseline",
+            "old",
+            old_hash,
+            scenarios_old,
+            stored_old_body(),
+            "pass",
+        ),
+        (
+            "original-new",
+            "baseline",
+            "new",
+            new_hash,
+            scenarios_new,
+            stored_new_body(),
+            "expected-red",
+        ),
+        (
+            "patched-new",
+            head,
+            "new",
+            new_hash,
+            scenarios_new,
+            stored_new_body(),
+            "pass",
+        ),
+    ] {
+        let stage_dir = run_dir.join("random-picker").join(stage);
+        std::fs::create_dir_all(&stage_dir).unwrap();
+        let red = verdict == "expected-red";
+        let stored = json!({
+            "stage": stage,
+            "check": "random-picker",
+            "change_ids": covered,
+            "expected_diagnostic": "random picker ids",
+            "expected_exchange": [
+                {"scenario": "random-search", "method": "POST", "path": "/search/random"}
+            ],
+            "commit": commit,
+            "spec_version": spec,
+            "spec_sha256": spec_hash,
+            "scenarios_dir": scenarios.display().to_string(),
+            "verdict": verdict,
+            "detail": "",
+            "exit_code": if red { 101 } else { 0 },
+            "signal": null,
+            "timed_out": false,
+            "build_failed": false,
+            "cases": [
+                {"name": "verify_random_picker", "passed": !red,
+                 "output": if red { "assertion failed: random picker ids are wrong" } else { "" }}
+            ]
+        });
+        std::fs::write(
+            stage_dir.join("stage.json"),
+            serde_json::to_vec_pretty(&stored).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            stage_dir.join("requests.jsonl"),
+            format!("{}\n", stored_trace_line(&body)),
+        )
+        .unwrap();
+    }
+}
+
+/// Manifest hashes of a setup migration.
+fn setup_hashes(setup: &Setup) -> (String, String) {
+    let manifest: AttemptRecord =
+        sethu::state::read_state_file(&layout::manifest_path(&setup.migration)).unwrap();
+    (manifest.old_spec_hash, manifest.new_spec_hash)
+}
+
+#[test]
+fn fixed_and_verified_records_with_a_stored_run() {
+    if !need_vimanam("fixed_and_verified_records_with_a_stored_run") {
+        return;
+    }
+    let setup = setup();
+    let head = head_commit(&setup.repo);
+    let (old_hash, new_hash) = setup_hashes(&setup);
+    let area = tempfile::tempdir().unwrap();
+    let (scenarios_old, scenarios_new) = write_stored_scenarios(area.path(), &old_hash, &new_hash);
+    write_stored_run(
+        &setup.migration,
+        "run-demo",
+        &head,
+        &old_hash,
+        &new_hash,
+        &scenarios_old,
+        &scenarios_new,
+        &[setup.ids[0].clone()],
+    );
+    let file = write_repo_file(&setup, "app/search.ts", "export {};\n");
+    let location = format!("{file}:3");
+
+    record_cmd(
+        &setup.repo,
+        &[
+            &setup.ids[0],
+            "--outcome",
+            "fixed_and_verified",
+            "--evidence",
+            "run:run-demo/random-picker",
+            "--evidence",
+            &location,
+        ],
+    )
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("recorded"))
+    .stdout(predicate::str::contains("fixed_and_verified"));
+
+    let ledger = stored_ledger(&setup);
+    ledger.validate().unwrap();
+    let entry = &ledger.dispositions[&setup.ids[0]];
+    assert_eq!(entry.current.outcome, Outcome::FixedAndVerified);
+    assert_eq!(
+        entry.current.evidence,
+        vec!["run:run-demo/random-picker".to_string(), location]
+    );
+}
+
+#[test]
+fn fixed_and_verified_is_refused_for_an_uncovered_change() {
+    if !need_vimanam("fixed_and_verified_is_refused_for_an_uncovered_change") {
+        return;
+    }
+    let setup = setup();
+    let head = head_commit(&setup.repo);
+    let (old_hash, new_hash) = setup_hashes(&setup);
+    let area = tempfile::tempdir().unwrap();
+    let (scenarios_old, scenarios_new) = write_stored_scenarios(area.path(), &old_hash, &new_hash);
+    write_stored_run(
+        &setup.migration,
+        "run-demo",
+        &head,
+        &old_hash,
+        &new_hash,
+        &scenarios_old,
+        &scenarios_new,
+        &["vc1_someone_else".to_string()],
+    );
+    let file = write_repo_file(&setup, "app/search.ts", "export {};\n");
+    let location = format!("{file}:3");
+
+    record_cmd(
+        &setup.repo,
+        &[
+            &setup.ids[0],
+            "--outcome",
+            "fixed_and_verified",
+            "--evidence",
+            "run:run-demo/random-picker",
+            "--evidence",
+            &location,
+        ],
+    )
+    .assert()
+    .failure()
+    .code(1)
+    .stderr(predicate::str::contains("covers"))
+    .stdout(predicate::str::is_empty());
+    assert!(!layout::ledger_path(&setup.migration).exists());
+}
+
+#[test]
+fn fixed_and_verified_is_refused_for_a_broken_exchange() {
+    if !need_vimanam("fixed_and_verified_is_refused_for_a_broken_exchange") {
+        return;
+    }
+    let setup = setup();
+    let head = head_commit(&setup.repo);
+    let (old_hash, new_hash) = setup_hashes(&setup);
+    let area = tempfile::tempdir().unwrap();
+    let (scenarios_old, scenarios_new) = write_stored_scenarios(area.path(), &old_hash, &new_hash);
+    write_stored_run(
+        &setup.migration,
+        "run-demo",
+        &head,
+        &old_hash,
+        &new_hash,
+        &scenarios_old,
+        &scenarios_new,
+        &[setup.ids[0].clone()],
+    );
+    std::fs::write(
+        setup
+            .migration
+            .join("runs")
+            .join("run-demo")
+            .join("random-picker")
+            .join("patched-new")
+            .join("requests.jsonl"),
+        "",
+    )
+    .unwrap();
+    let file = write_repo_file(&setup, "app/search.ts", "export {};\n");
+    let location = format!("{file}:3");
+
+    record_cmd(
+        &setup.repo,
+        &[
+            &setup.ids[0],
+            "--outcome",
+            "fixed_and_verified",
+            "--evidence",
+            "run:run-demo/random-picker",
+            "--evidence",
+            &location,
+        ],
+    )
+    .assert()
+    .failure()
+    .code(1)
+    .stderr(predicate::str::contains(
+        "not received, validated, and answered",
+    ))
     .stdout(predicate::str::is_empty());
     assert!(!layout::ledger_path(&setup.migration).exists());
 }
@@ -766,4 +1136,407 @@ fn several_attempts_refuse_without_a_choice() {
     .code(1)
     .stderr(predicate::str::contains("needs exactly one"))
     .stdout(predicate::str::is_empty());
+}
+
+/// Live demo consumer checkout the end-to-end test clones but never modifies.
+const DEMO_REPO: &str = "/home/nryn/work/sethu-demo-picker";
+
+/// Run one git command in a directory and keep stdout on success.
+fn demo_git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Clone the demo consumer into a scratch directory.
+///
+/// The clone carries the full history, so baseline and patched commits
+/// resolve exactly like they would in the live checkout.
+fn clone_demo() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("consumer");
+    let output = std::process::Command::new("git")
+        .arg("clone")
+        .arg("-q")
+        .arg(DEMO_REPO)
+        .arg(&target)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "clone failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    demo_git(&target, &["config", "user.email", "test@example.com"]);
+    demo_git(&target, &["config", "user.name", "Test"]);
+    dir
+}
+
+/// Replace one source block exactly once, commit, and return the commit.
+fn commit_edit(repo: &Path, file: &str, old: &str, new: &str, message: &str) -> String {
+    let path = repo.join(file);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        text.matches(old).count(),
+        1,
+        "expected one match for the patch anchor in {file}"
+    );
+    std::fs::write(&path, text.replace(old, new)).unwrap();
+    demo_git(repo, &["add", "."]);
+    demo_git(
+        repo,
+        &[
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ],
+    );
+    demo_git(repo, &["rev-parse", "HEAD"]).trim().to_string()
+}
+
+/// Correct repair: random search reads the new array, others keep the parser.
+const E2E_PATCH_OLD: &str = r#"    /// Run a random search and return one page of assets.
+    pub fn search_random(&self, page: u64) -> Result<SearchResponse, Error> {
+        self.post("/search/random", &PageBody { page })
+    }"#;
+
+/// Correct repair: random search reads the new array, others keep the parser.
+const E2E_PATCH_NEW: &str = r#"    /// Run a random search and return one page of assets.
+    pub fn search_random(&self, page: u64) -> Result<SearchResponse, Error> {
+        let url = format!("{}/search/random", self.base_url);
+        let response = self
+            .http
+            .post(&url)
+            .json(&PageBody { page })
+            .send()
+            .map_err(Error::Http)?;
+        if !response.status().is_success() {
+            return Err(Error::Status(response.status().as_u16()));
+        }
+        let text = response.text().map_err(Error::Http)?;
+        if let Ok(items) = serde_json::from_str::<Vec<Asset>>(&text) {
+            return Ok(SearchResponse {
+                albums: AlbumResults::default(),
+                assets: AssetResults {
+                    count: items.len() as u64,
+                    items,
+                },
+            });
+        }
+        parse_search_response(&text)
+    }"#;
+
+/// Harness test driving the picker through the stub.
+const E2E_HARNESS_TESTS: &str = r#"
+use demo_picker::{ImmichClient, Picker};
+
+#[test]
+fn verify_random_picker() {
+    let client = ImmichClient::from_env().expect("read stub address from environment");
+    let mut picker = Picker::new();
+    match client.search_random(1) {
+        Ok(response) => picker.add_response(&response),
+        Err(_) => {}
+    }
+    let got: Vec<String> = picker.selection().to_vec();
+    assert_eq!(
+        got,
+        vec!["asset-r1".to_string(), "asset-r2".to_string()],
+        "random picker ids"
+    );
+}
+"#;
+
+/// Build a `sethu` invocation with an isolated cargo target directory.
+fn e2e_sethu(target: &Path) -> Command {
+    let mut cmd = Command::cargo_bin("sethu").unwrap();
+    cmd.env("CARGO_TARGET_DIR", target);
+    cmd
+}
+
+/// Change ids of the random-search endpoint in capture order.
+fn random_ids(changes: &[sethu::vimanam::ChangeRecord]) -> Vec<String> {
+    changes
+        .iter()
+        .filter(|item| item.endpoint.method == "POST" && item.endpoint.path == "/search/random")
+        .map(|item| item.id.clone())
+        .collect()
+}
+
+#[test]
+fn demo_matrix_run_records_random_search_repairs() {
+    if !need_vimanam("demo_matrix_run_records_random_search_repairs") {
+        return;
+    }
+    let _clone = clone_demo();
+    let repo = _clone.path().join("consumer").canonicalize().unwrap();
+    let old = fixture("immich/old.json");
+    let new = fixture("immich/new.json");
+
+    let target = tempfile::tempdir().unwrap();
+    e2e_sethu(target.path())
+        .current_dir(&repo)
+        .arg("init")
+        .arg(&old)
+        .arg(&new)
+        .arg("--repo")
+        .arg(&repo)
+        .assert()
+        .success();
+
+    let root = layout::state_root(&repo);
+    let names: Vec<String> = std::fs::read_dir(layout::migrations_dir(&root))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names.len(), 1);
+    let migration = layout::migration_dir(&root, &names[0]);
+    let manifest: AttemptRecord =
+        sethu::state::read_state_file(&layout::manifest_path(&migration)).unwrap();
+    let pair = layout::pair_dir(&root, &manifest.old_spec_hash, &manifest.new_spec_hash).unwrap();
+    let capture = layout::capture_dir(&pair, &manifest.capture_id);
+    let raw = std::fs::read(layout::changes_file(&capture)).unwrap();
+    let document = sethu::vimanam::parse_diff_output(&raw).unwrap();
+    let random = random_ids(&document.changes);
+    assert_eq!(
+        random.len(),
+        5,
+        "expected five random-search records, got {random:?}"
+    );
+    let required: Vec<String> = document
+        .changes
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.severity,
+                sethu::vimanam::Severity::Breaking | sethu::vimanam::Severity::Review
+            )
+        })
+        .map(|item| item.id.clone())
+        .collect();
+    assert_eq!(required.len(), 27);
+
+    let baseline = demo_git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+    let patched = commit_edit(
+        &repo,
+        "src/lib.rs",
+        E2E_PATCH_OLD,
+        E2E_PATCH_NEW,
+        "give random search its own array path",
+    );
+
+    let harness = migration.join("harness");
+    std::fs::create_dir_all(harness.join("tests")).unwrap();
+    std::fs::create_dir_all(harness.join("scenarios").join("old")).unwrap();
+    std::fs::create_dir_all(harness.join("scenarios").join("new")).unwrap();
+    std::fs::write(
+        harness.join("tests").join("harness_checks.rs"),
+        E2E_HARNESS_TESTS,
+    )
+    .unwrap();
+    let scenario = |id: &str, sha: &str, request: Value, response: Value| {
+        json!({
+            "id": id,
+            "change_ids": ["vc1_demo"],
+            "spec_sha256": sha,
+            "request": request,
+            "response": {"status": 200, "body": response}
+        })
+    };
+    let post = |path: &str, body: Option<Value>| {
+        let mut request = json!({"method": "POST", "path": path});
+        if let Some(body) = body {
+            request["body"] = body;
+        }
+        request
+    };
+    std::fs::write(
+        harness.join("scenarios").join("old").join("random.json"),
+        serde_json::to_vec_pretty(&scenario(
+            "random-search",
+            &manifest.old_spec_hash,
+            post("/search/random", Some(json!({"page": 1}))),
+            stored_old_body(),
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        harness.join("scenarios").join("new").join("random.json"),
+        serde_json::to_vec_pretty(&scenario(
+            "random-search",
+            &manifest.new_spec_hash,
+            post("/search/random", None),
+            stored_new_body(),
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let manifest_path = migration.join("verify-manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&json!({
+            "schema_version": 1,
+            "repo": repo.display().to_string(),
+            "baseline_commit": baseline,
+            "patched_commit": patched,
+            "harness": "harness",
+            "scenarios_old": "harness/scenarios/old",
+            "scenarios_new": "harness/scenarios/new",
+            "spec_old_sha256": manifest.old_spec_hash,
+            "spec_new_sha256": manifest.new_spec_hash,
+            "checks": [
+                {
+                    "name": "random-picker",
+                    "role": "regression",
+                    "change_ids": random,
+                    "test": "verify_random_picker",
+                    "expected_diagnostic": "random picker ids",
+                    "expected_exchange": [
+                        {"scenario": "random-search", "method": "POST", "path": "/search/random"}
+                    ]
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    e2e_sethu(target.path())
+        .args(["verify", "--freeze", "--manifest"])
+        .arg(&manifest_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("frozen"));
+
+    e2e_sethu(target.path())
+        .args(["verify", "--manifest"])
+        .arg(&manifest_path)
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("random-picker: verified"));
+
+    let runs = migration.join("runs");
+    let run_names: Vec<String> = std::fs::read_dir(&runs)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_str().unwrap().to_string())
+        .collect();
+    assert_eq!(run_names.len(), 1, "expected one run in {}", runs.display());
+    let run_ref = format!("run:{}/random-picker", run_names[0]);
+
+    let others: Vec<String> = required
+        .iter()
+        .filter(|id| !random.contains(id))
+        .cloned()
+        .collect();
+    assert!(!others.is_empty());
+    record_cmd(
+        &repo,
+        &[
+            &others[0],
+            "--outcome",
+            "fixed_and_verified",
+            "--evidence",
+            &run_ref,
+            "--evidence",
+            "src/lib.rs:1",
+        ],
+    )
+    .assert()
+    .failure()
+    .code(1)
+    .stderr(predicate::str::contains("covers"))
+    .stdout(predicate::str::is_empty());
+    record_cmd(
+        &repo,
+        &[
+            &others[1],
+            "--outcome",
+            "fixed_and_verified",
+            "--evidence",
+            "run:run-ghost/random-picker",
+            "--evidence",
+            "src/lib.rs:1",
+        ],
+    )
+    .assert()
+    .failure()
+    .code(1)
+    .stderr(predicate::str::contains("no stored run"))
+    .stdout(predicate::str::is_empty());
+    assert!(!layout::ledger_path(&migration).exists());
+
+    for id in &random {
+        record_cmd(
+            &repo,
+            &[
+                id,
+                "--outcome",
+                "fixed_and_verified",
+                "--evidence",
+                &run_ref,
+                "--evidence",
+                "src/lib.rs:1",
+            ],
+        )
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fixed_and_verified"));
+    }
+    std::fs::write(repo.join("search-notes.md"), "searched wrappers\n").unwrap();
+    for id in &others {
+        record_cmd(
+            &repo,
+            &[
+                id,
+                "--outcome",
+                "no_usage_found",
+                "--evidence",
+                "search-notes.md",
+            ],
+        )
+        .assert()
+        .success();
+    }
+
+    let mut check = Command::cargo_bin("sethu").unwrap();
+    check
+        .current_dir(&repo)
+        .arg("check")
+        .assert()
+        .success()
+        .code(0)
+        .stdout(
+            predicate::str::contains("accounted: yes").and(predicate::str::contains("ready: yes")),
+        );
+    let mut ready = Command::cargo_bin("sethu").unwrap();
+    ready
+        .current_dir(&repo)
+        .arg("check")
+        .arg("--require-ready")
+        .assert()
+        .success()
+        .code(0);
+
+    let ledger: Ledger = sethu::state::read_state_file(&layout::ledger_path(&migration)).unwrap();
+    assert_eq!(ledger.dispositions.len(), 27);
+    for id in &random {
+        let entry = &ledger.dispositions[id];
+        assert_eq!(entry.current.outcome, Outcome::FixedAndVerified);
+        assert!(entry.current.evidence.contains(&run_ref));
+    }
 }

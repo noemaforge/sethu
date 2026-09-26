@@ -223,12 +223,14 @@ fn has_note(note: Option<&str>) -> bool {
 
 /// Check the evidence for one outcome.
 ///
-/// Verified closure needs a matching passing run. The verification
-/// runner has not landed yet, so that outcome is always refused with
-/// the reason named. Unaffected closure needs a line pinned code
-/// location. Scoped absence needs a repository file or a pinned
-/// location. Open outcomes need a checkable reference, and the pending
-/// decision also needs a note that states what is being asked.
+/// Verified closure needs a run reference that names a stored run and
+/// a check, plus a pinned code location. The deeper run validation
+/// (the run exists, its check covers the change, the commit matches,
+/// and the trace shows the exchange) runs at write and check time
+/// against the stored artefacts. Unaffected closure needs a line
+/// pinned code location. Scoped absence needs a repository file or a
+/// pinned location. Open outcomes need a checkable reference, and the
+/// pending decision also needs a note that states what is being asked.
 pub fn check_evidence(
     outcome: Outcome,
     summary: &EvidenceSummary,
@@ -236,9 +238,16 @@ pub fn check_evidence(
 ) -> anyhow::Result<()> {
     match outcome {
         Outcome::FixedAndVerified => {
-            anyhow::bail!(
-                "outcome `fixed_and_verified` needs a matching passing verification run, but the verification runner has not landed yet, so no passing run can exist"
-            );
+            if summary.runs == 0 {
+                anyhow::bail!(
+                    "outcome `fixed_and_verified` needs at least one run reference shaped like `run:<run-id>/<check>` that names the stored run and the check"
+                );
+            }
+            if summary.code == 0 {
+                anyhow::bail!(
+                    "outcome `fixed_and_verified` needs at least one code location shaped like `path:line` that names a file in the repository"
+                );
+            }
         }
         Outcome::UnaffectedInApplication => {
             if summary.code == 0 {
@@ -452,13 +461,31 @@ mod tests {
     }
 
     #[test]
-    fn verified_closure_is_always_refused() {
-        let full = summary_for(2, 2, 1);
-        let err = check_evidence(Outcome::FixedAndVerified, &full, Some("note")).unwrap_err();
-        assert!(err.to_string().contains("verification runner"));
-        assert!(err.to_string().contains("has not landed"));
-        let empty = EvidenceSummary::default();
-        assert!(check_evidence(Outcome::FixedAndVerified, &empty, None).is_err());
+    fn verified_closure_needs_a_run_and_a_code_location() {
+        assert!(
+            check_evidence(
+                Outcome::FixedAndVerified,
+                &summary_for(1, 0, 1),
+                Some("note")
+            )
+            .is_ok()
+        );
+        let missing_run =
+            check_evidence(Outcome::FixedAndVerified, &summary_for(1, 0, 0), None).unwrap_err();
+        assert!(
+            missing_run.to_string().contains("run:<run-id>/<check>"),
+            "refusal names the expected shape, got: {missing_run}"
+        );
+        let missing_code =
+            check_evidence(Outcome::FixedAndVerified, &summary_for(0, 0, 2), None).unwrap_err();
+        assert!(
+            missing_code.to_string().contains("path:line"),
+            "refusal names the expected shape, got: {missing_code}"
+        );
+        assert!(check_evidence(Outcome::FixedAndVerified, &summary_for(0, 2, 0), None).is_err());
+        assert!(
+            check_evidence(Outcome::FixedAndVerified, &EvidenceSummary::default(), None).is_err()
+        );
     }
 
     #[test]

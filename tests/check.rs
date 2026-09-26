@@ -606,8 +606,8 @@ fn identity_mismatch_exits_4() {
 }
 
 #[test]
-fn verified_claim_without_a_runner_exits_4() {
-    if !need_vimanam("verified_claim_without_a_runner_exits_4") {
+fn verified_claim_without_a_run_exits_4() {
+    if !need_vimanam("verified_claim_without_a_run_exits_4") {
         return;
     }
     let setup = setup();
@@ -904,4 +904,332 @@ fn attempt_empty_value_is_a_usage_error() {
         .code(2)
         .stderr(predicate::str::contains("non-empty"))
         .stdout(predicate::str::is_empty());
+}
+
+/// Read the consumer HEAD of a setup repository.
+fn head_commit(repo: &Path) -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// One asset body that validates under both pinned specs.
+fn stored_asset(id: &str, index: usize) -> serde_json::Value {
+    serde_json::json!({
+        "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+        "deviceAssetId": format!("device-{index}"),
+        "deviceId": "device-1",
+        "duration": "0:00:01.000000",
+        "fileCreatedAt": "2024-09-27T10:00:00.000Z",
+        "fileModifiedAt": "2024-09-27T10:00:00.000Z",
+        "hasMetadata": true,
+        "id": id,
+        "isArchived": false,
+        "isFavorite": false,
+        "isOffline": false,
+        "isTrashed": false,
+        "localDateTime": "2024-09-27T10:00:00.000Z",
+        "originalFileName": format!("photo-{index}.jpg"),
+        "originalPath": format!("/photos/photo-{index}.jpg"),
+        "ownerId": "550e8400-e29b-41d4-a716-446655440001",
+        "thumbhash": "3OcRJwh4d3h6eIeIh3h2e3h4gQ",
+        "type": "IMAGE",
+        "updatedAt": "2024-09-27T10:00:00.000Z",
+        "stack": null
+    })
+}
+
+/// Old-contract search response holding two assets.
+fn stored_old_body() -> serde_json::Value {
+    let items: Vec<serde_json::Value> = ["asset-r1", "asset-r2"]
+        .iter()
+        .enumerate()
+        .map(|(index, id)| stored_asset(id, index))
+        .collect();
+    serde_json::json!({
+        "albums": {"count": 0, "facets": [], "items": [], "total": 0},
+        "assets": {
+            "count": items.len(),
+            "facets": [],
+            "items": items,
+            "nextPage": null,
+            "total": items.len()
+        }
+    })
+}
+
+/// New-contract random response holding two assets.
+fn stored_new_body() -> serde_json::Value {
+    serde_json::Value::Array(
+        ["asset-r1", "asset-r2"]
+            .iter()
+            .enumerate()
+            .map(|(index, id)| stored_asset(id, index))
+            .collect(),
+    )
+}
+
+/// Manifest hashes of a setup migration.
+fn setup_hashes(setup: &Setup) -> (String, String) {
+    let manifest: AttemptRecord =
+        sethu::state::read_state_file(&layout::manifest_path(&setup.migration)).unwrap();
+    (manifest.old_spec_hash, manifest.new_spec_hash)
+}
+
+/// Write one fabricated verified run under a migration.
+///
+/// The run record names one regression check covering `covered`. Every
+/// stage carries a passing verdict with a clean trace, and the patched
+/// stage ran on `head`. The caller keeps the returned scenario area
+/// alive for the whole test.
+fn write_stored_run(
+    setup: &Setup,
+    run_id: &str,
+    head: &str,
+    covered: &[String],
+) -> tempfile::TempDir {
+    let (old_hash, new_hash) = setup_hashes(setup);
+    let area = tempfile::tempdir().unwrap();
+    let scenarios_old = area.path().join("scenarios-old");
+    let scenarios_new = area.path().join("scenarios-new");
+    std::fs::create_dir_all(&scenarios_old).unwrap();
+    std::fs::create_dir_all(&scenarios_new).unwrap();
+    for (dir, hash, body) in [
+        (&scenarios_old, &old_hash, stored_old_body()),
+        (&scenarios_new, &new_hash, stored_new_body()),
+    ] {
+        let scenario = serde_json::json!({
+            "id": "random-search",
+            "change_ids": ["vc1_demo"],
+            "spec_sha256": hash,
+            "request": {"method": "POST", "path": "/search/random"},
+            "response": {"status": 200, "body": body}
+        });
+        std::fs::write(
+            dir.join("random.json"),
+            serde_json::to_vec_pretty(&scenario).unwrap(),
+        )
+        .unwrap();
+    }
+    let run_dir = setup.migration.join("runs").join(run_id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let record = serde_json::json!({
+        "run_id": run_id,
+        "harness_hash": "abc",
+        "harness_changed": false,
+        "sethu_version": "0.1.0",
+        "nextest_version": "nextest",
+        "checks": [
+            {"name": "random-picker", "role": "regression",
+             "change_ids": covered, "verified": true, "stages": []}
+        ]
+    });
+    std::fs::write(
+        run_dir.join("run.json"),
+        serde_json::to_vec_pretty(&record).unwrap(),
+    )
+    .unwrap();
+    for (stage, commit, spec, spec_hash, scenarios, body, verdict) in [
+        (
+            "original-old",
+            "baseline",
+            "old",
+            &old_hash,
+            &scenarios_old,
+            stored_old_body(),
+            "pass",
+        ),
+        (
+            "original-new",
+            "baseline",
+            "new",
+            &new_hash,
+            &scenarios_new,
+            stored_new_body(),
+            "expected-red",
+        ),
+        (
+            "patched-new",
+            head,
+            "new",
+            &new_hash,
+            &scenarios_new,
+            stored_new_body(),
+            "pass",
+        ),
+    ] {
+        let stage_dir = run_dir.join("random-picker").join(stage);
+        std::fs::create_dir_all(&stage_dir).unwrap();
+        let red = verdict == "expected-red";
+        let stored = serde_json::json!({
+            "stage": stage,
+            "check": "random-picker",
+            "change_ids": covered,
+            "expected_diagnostic": "random picker ids",
+            "expected_exchange": [
+                {"scenario": "random-search", "method": "POST", "path": "/search/random"}
+            ],
+            "commit": commit,
+            "spec_version": spec,
+            "spec_sha256": spec_hash,
+            "scenarios_dir": scenarios.display().to_string(),
+            "verdict": verdict,
+            "detail": "",
+            "exit_code": if red { 101 } else { 0 },
+            "signal": null,
+            "timed_out": false,
+            "build_failed": false,
+            "cases": [
+                {"name": "verify_random_picker", "passed": !red,
+                 "output": if red { "assertion failed: random picker ids are wrong" } else { "" }}
+            ]
+        });
+        std::fs::write(
+            stage_dir.join("stage.json"),
+            serde_json::to_vec_pretty(&stored).unwrap(),
+        )
+        .unwrap();
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let trace = serde_json::json!({
+            "scenario_id": "random-search",
+            "method": "POST",
+            "path": "/search/random",
+            "request_valid": true,
+            "request_detail": "body matches the contract schema",
+            "response_status": 200,
+            "response_body_sha256": sethu::stub::body_sha256_hex(&bytes),
+            "response_written": true
+        });
+        std::fs::write(
+            stage_dir.join("requests.jsonl"),
+            format!(
+                "{}\n",
+                String::from_utf8(serde_json::to_vec(&trace).unwrap()).unwrap()
+            ),
+        )
+        .unwrap();
+    }
+    area
+}
+
+/// Fill a ledger where one change carries a verified repair.
+///
+/// Every other required change records scoped absence backed by the
+/// same trace file.
+fn fill_verified_ledger(setup: &Setup, target: &str, run_ref: &str, location: &str, trace: &str) {
+    for id in &setup.required {
+        let id = id.clone();
+        if id == target {
+            record(
+                setup,
+                &id,
+                &[
+                    "fixed_and_verified",
+                    "--evidence",
+                    run_ref,
+                    "--evidence",
+                    location,
+                ],
+            );
+        } else {
+            record(setup, &id, &["no_usage_found", "--evidence", trace]);
+        }
+    }
+}
+
+#[test]
+fn verified_claim_is_accounted_and_ready() {
+    if !need_vimanam("verified_claim_is_accounted_and_ready") {
+        return;
+    }
+    let setup = setup();
+    assert_eq!(setup.required.len(), 27);
+    let head = head_commit(&setup.repo);
+    let target = setup.required[0].clone();
+    let _area = write_stored_run(&setup, "run-demo", &head, std::slice::from_ref(&target));
+    let file = write_repo_file(&setup, "app/search.ts", "export {};\n");
+    let location = format!("{file}:3");
+    let trace = write_repo_file(&setup, "trace-notes.md", "searched wrappers\n");
+    let run_ref = "run:run-demo/random-picker";
+    fill_verified_ledger(&setup, &target, run_ref, &location, &trace);
+
+    check_cmd(&setup.repo, &[])
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("accounted: yes"))
+        .stdout(predicate::str::contains("ready: yes"));
+
+    check_cmd(&setup.repo, &["--require-ready"])
+        .assert()
+        .success()
+        .code(0);
+}
+
+/// Commit one more change in a repository without touching state.
+fn commit_extra_change(repo: &Path) {
+    std::fs::write(repo.join("extra-note.md"), "later work\n").unwrap();
+    let run = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    run(&["add", "."]);
+    run(&[
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test",
+        "commit",
+        "-q",
+        "-m",
+        "later work",
+    ]);
+}
+
+#[test]
+fn verified_claim_goes_stale_on_a_new_commit() {
+    if !need_vimanam("verified_claim_goes_stale_on_a_new_commit") {
+        return;
+    }
+    let setup = setup();
+    let head = head_commit(&setup.repo);
+    let target = setup.required[0].clone();
+    let _area = write_stored_run(&setup, "run-demo", &head, std::slice::from_ref(&target));
+    let file = write_repo_file(&setup, "app/search.ts", "export {};\n");
+    let location = format!("{file}:3");
+    let trace = write_repo_file(&setup, "trace-notes.md", "searched wrappers\n");
+    fill_verified_ledger(
+        &setup,
+        &target,
+        "run:run-demo/random-picker",
+        &location,
+        &trace,
+    );
+
+    check_cmd(&setup.repo, &[])
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("accounted: yes"));
+
+    commit_extra_change(&setup.repo);
+
+    check_cmd(&setup.repo, &[])
+        .assert()
+        .failure()
+        .code(4)
+        .stdout(predicate::str::contains("stale_verification"))
+        .stdout(predicate::str::contains(&target));
 }

@@ -9,8 +9,9 @@
 //! open work. The two results stay separate and map to distinct exit codes.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use indexmap::IndexMap;
 use serde::Serialize;
 
@@ -182,6 +183,7 @@ pub fn evaluate(inputs: &Inputs<'_>) -> Evaluation {
         Some(bytes) => parse_ledger(
             bytes,
             inputs.repo,
+            inputs.manifest,
             &required,
             &required_set,
             &known_set,
@@ -228,6 +230,841 @@ pub fn exit_code(accounted: bool, ready: bool, require_ready: bool) -> std::proc
         return std::process::ExitCode::from(5);
     }
     std::process::ExitCode::SUCCESS
+}
+
+/// Reference to one stored verification run and one check inside it.
+///
+/// The shape is `run:<run-id>/<check>`. The run id names a stored run
+/// directory under the migration. The check names one check from that
+/// run record. Both parts are required. A run without a check cannot
+/// show which behaviour was exercised.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunReference {
+    /// Stored run directory name.
+    pub run_id: String,
+    /// Check name from the run record.
+    pub check: String,
+}
+
+/// Parse a `run:<run-id>/<check>` evidence reference.
+///
+/// The `run:` prefix is required. The remainder splits on the first
+/// slash into a non-empty run id and a non-empty check name. Anything
+/// else fails with the reference named and the expected shape shown.
+pub fn parse_run_reference(reference: &str) -> anyhow::Result<RunReference> {
+    let Some(rest) = reference.strip_prefix("run:") else {
+        anyhow::bail!(
+            "reference `{reference}` needs the shape `run:<run-id>/<check>` that names the stored run and the check"
+        );
+    };
+    match rest.split_once('/') {
+        Some((run_id, check)) if !run_id.is_empty() && !check.is_empty() => Ok(RunReference {
+            run_id: run_id.to_string(),
+            check: check.to_string(),
+        }),
+        _ => anyhow::bail!(
+            "reference `{reference}` needs the shape `run:<run-id>/<check>` that names the stored run and the check"
+        ),
+    }
+}
+
+/// One expected failure signature as snapshotted in a run artefact.
+///
+/// A plain string must appear verbatim in the failure output. A regex
+/// object must match somewhere in the same output.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(untagged)]
+enum StoredDiagnostic {
+    /// Verbatim substring of the failure output.
+    Substring(String),
+    /// Regular expression matched against the failure output.
+    Pattern {
+        /// Regular expression source.
+        regex: String,
+    },
+}
+
+/// One stored test case inside a stage record.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+struct StoredCase {
+    /// Test case name as reported.
+    #[serde(default)]
+    name: String,
+    /// Whether the case passed.
+    #[serde(default)]
+    passed: bool,
+    /// Failure message plus captured output.
+    #[serde(default)]
+    output: String,
+}
+
+/// One expected stub exchange as snapshotted in a run artefact.
+///
+/// The snapshot freezes what the verdict rested on, so a later manifest
+/// edit cannot reattribute the run.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+struct StoredExchange {
+    /// Scenario id the trace must show.
+    #[serde(default)]
+    scenario: String,
+    /// Request method the trace must show.
+    #[serde(default)]
+    method: String,
+    /// Request path template the trace must show.
+    #[serde(default)]
+    path: String,
+}
+
+/// One check summary as stored in a run record.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+struct StoredRunCheck {
+    /// Check name from the manifest.
+    #[serde(default)]
+    name: String,
+    /// Check role from the manifest.
+    #[serde(default)]
+    role: String,
+    /// Contract change records the check covered when the run started.
+    #[serde(default)]
+    change_ids: Vec<String>,
+    /// Whether the three stages met the check matrix.
+    #[serde(default)]
+    verified: bool,
+}
+
+/// One run record as stored beside a verification manifest.
+///
+/// Only the fields the claim check needs are kept. Unknown fields stay
+/// unread.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+struct StoredRunRecord {
+    /// Unique run identifier and directory name.
+    #[serde(default)]
+    run_id: String,
+    /// Per-check summaries in manifest order.
+    #[serde(default)]
+    checks: Vec<StoredRunCheck>,
+}
+
+/// One stage record as stored beside its test streams and stub trace.
+///
+/// Only the fields the claim check needs are kept. Unknown fields stay
+/// unread.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+struct StoredStageRecord {
+    /// Check name from the manifest.
+    #[serde(default)]
+    check: String,
+    /// Stage name, such as `original-new`.
+    #[serde(default)]
+    stage: String,
+    /// Contract change records the check covered when the run started.
+    #[serde(default)]
+    change_ids: Vec<String>,
+    /// Failure signature the red stage required, when one applied.
+    #[serde(default)]
+    expected_diagnostic: Option<StoredDiagnostic>,
+    /// Stub exchanges the stage had to show.
+    #[serde(default)]
+    expected_exchange: Vec<StoredExchange>,
+    /// Application commit checked out for this stage.
+    #[serde(default)]
+    commit: String,
+    /// Contract version served by this stage stub.
+    #[serde(default)]
+    spec_version: String,
+    /// Pinned spec hash for this stage.
+    #[serde(default)]
+    spec_sha256: String,
+    /// Scenario directory feeding this stage stub.
+    #[serde(default)]
+    scenarios_dir: String,
+    /// Verdict word for this stage.
+    #[serde(default)]
+    verdict: String,
+    /// Process exit code, when the process exited.
+    #[serde(default)]
+    exit_code: Option<i32>,
+    /// Signal that killed the process, when one did.
+    #[serde(default)]
+    signal: Option<i32>,
+    /// Whether the run hit the deadline and was killed.
+    #[serde(default)]
+    timed_out: bool,
+    /// Whether output shows the harness failed to build.
+    #[serde(default)]
+    build_failed: bool,
+    /// Parsed per-test cases with their outputs.
+    #[serde(default)]
+    cases: Vec<StoredCase>,
+}
+
+/// Deepest directory level searched for stored run artefacts.
+///
+/// Run records sit at most a few levels down (`runs/<id>/run.json`, or
+/// deeper when the manifest lives in a nested harness directory). The
+/// bound keeps the walk cheap on large consumer checkouts.
+const MAX_RUN_WALK_DEPTH: usize = 8;
+
+/// Validate a `fixed_and_verified` evidence list against stored runs.
+///
+/// Every `run:<run-id>/<check>` reference must resolve to a stored run
+/// under the migration, name a check from that run record, and rest on
+/// passing stages whose trace shows the expected exchange. At least one
+/// reference must name a regression check that covers the change id. A
+/// guard alone cannot show a repair. A check whose scenarios cannot
+/// support a claim blocks the claim instead of passing it. The
+/// `patched-new` stage must have run on the consumer commit under
+/// review. Anything else fails with the cause named.
+pub fn validate_fixed_claim(
+    repo: &Path,
+    manifest: &AttemptRecord,
+    change_id: &str,
+    evidence: &[String],
+) -> anyhow::Result<()> {
+    let mut checked = Vec::with_capacity(evidence.len());
+    for reference in evidence {
+        match ledger::check_reference(repo, reference) {
+            Ok(item) => checked.push(item),
+            Err(err) => {
+                anyhow::bail!("change {change_id} cites unusable evidence: {err:#}");
+            }
+        }
+    }
+    let summary = ledger::summarize(&checked);
+    ledger::check_evidence(ledger::Outcome::FixedAndVerified, &summary, None)?;
+    let mut references = Vec::new();
+    for item in &checked {
+        if item.kind != ledger::EvidenceKind::Run {
+            continue;
+        }
+        match parse_run_reference(&item.reference) {
+            Ok(parsed) => references.push(parsed),
+            Err(err) => {
+                anyhow::bail!("change {change_id} cites {err:#}");
+            }
+        }
+    }
+    if references.is_empty() {
+        anyhow::bail!(
+            "change {change_id} needs a run reference shaped like `run:<run-id>/<check>` that names the stored run and the check"
+        );
+    }
+    let head = crate::state::attempt::read_baseline_commit(repo).map_err(|err| {
+        anyhow::anyhow!(
+            "cannot read the consumer commit in {}: {err:#}, so the run cannot be bound to the current state",
+            repo.display()
+        )
+    })?;
+    let root = crate::state::layout::state_root(repo);
+    let migration = crate::state::layout::migrations_dir(&root).join(&manifest.attempt_id);
+    let mut saw_regression = false;
+    let mut covered = false;
+    for reference in &references {
+        let inspected = inspect_run(&root, &migration, manifest, change_id, &head, reference)?;
+        if inspected.regression {
+            saw_regression = true;
+            if inspected.covers {
+                covered = true;
+            }
+        }
+    }
+    if !saw_regression {
+        anyhow::bail!(
+            "change {change_id} names only guard checks, and a guard protects unchanged behaviour, so no named check shows the repair"
+        );
+    }
+    if !covered {
+        anyhow::bail!(
+            "no named check covers change {change_id}, so the named runs cannot verify it"
+        );
+    }
+    Ok(())
+}
+
+/// What one referenced check proved about the change.
+struct InspectedCheck {
+    /// Whether the named check regresses behaviour rather than guarding it.
+    regression: bool,
+    /// Whether the named check covers the change under review.
+    covers: bool,
+}
+
+/// Validate one run reference through its stored stages.
+///
+/// The run record must parse, the check must exist with a known role,
+/// and the check must have verified. Every stage must then carry the
+/// verdict its role requires, with stored cases and exit codes that
+/// back the verdict and the red diagnostic where one applies. The
+/// patched commit must match the consumer state under review, and
+/// every stage trace must show the expected exchange. Failures name
+/// the run, the check, and the stage.
+fn inspect_run(
+    root: &Path,
+    migration: &Path,
+    manifest: &AttemptRecord,
+    change_id: &str,
+    head: &str,
+    reference: &RunReference,
+) -> anyhow::Result<InspectedCheck> {
+    let Some(run_dir) = find_run_dir(migration, &reference.run_id) else {
+        anyhow::bail!(
+            "change {change_id} names no stored run `{}` under the migration ({})",
+            reference.run_id,
+            known_run_ids(migration)
+        );
+    };
+    let record = read_run_record(&run_dir).map_err(|err| {
+        anyhow::anyhow!(
+            "stored run `{}` keeps a run record that is not usable: {err:#}",
+            reference.run_id
+        )
+    })?;
+    let Some(check) = record
+        .checks
+        .iter()
+        .find(|item| item.name == reference.check)
+    else {
+        let known = record
+            .checks
+            .iter()
+            .map(|item| format!("`{}`", item.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(
+            "change {change_id} names no check `{}` in stored run `{}` (known: {known})",
+            reference.check,
+            reference.run_id
+        );
+    };
+    let regression = match check.role.as_str() {
+        "regression" => true,
+        "guard" => false,
+        _ => {
+            anyhow::bail!(
+                "check `{}` in stored run `{}` has role `{}`, need `regression` or `guard`",
+                reference.check,
+                reference.run_id,
+                check.role
+            );
+        }
+    };
+    if !check.verified {
+        anyhow::bail!(
+            "check `{}` in stored run `{}` did not verify, so it cannot back the claim",
+            reference.check,
+            reference.run_id
+        );
+    }
+    let stages: [(&str, &str); 3] = if regression {
+        [
+            ("original-old", "pass"),
+            ("original-new", "expected-red"),
+            ("patched-new", "pass"),
+        ]
+    } else {
+        [
+            ("original-old", "pass"),
+            ("original-new", "pass"),
+            ("patched-new", "pass"),
+        ]
+    };
+    let mut supported = false;
+    for (stage_name, wanted) in stages {
+        let stage = read_stage_record(&run_dir, &reference.check, stage_name).map_err(|err| {
+            anyhow::anyhow!(
+                "check `{}` in stored run `{}` keeps no usable `{stage_name}` stage: {err:#}",
+                reference.check,
+                reference.run_id
+            )
+        })?;
+        if stage.verdict != wanted {
+            anyhow::bail!(
+                "stage `{stage_name}` of check `{}` in stored run `{}` reads `{}` but the claim needs `{wanted}`",
+                reference.check,
+                reference.run_id,
+                stage.verdict
+            );
+        }
+        check_stage_cases(
+            &run_dir,
+            reference,
+            &stage,
+            regression && stage_name == "original-new",
+        )?;
+        if stage_name == "patched-new" && stage.commit != head {
+            anyhow::bail!(
+                "stage `patched-new` of check `{}` in stored run `{}` ran on commit {} but the consumer is at {head}, so the run no longer matches the current state",
+                reference.check,
+                reference.run_id,
+                stage.commit
+            );
+        }
+        if stage.expected_exchange.is_empty() {
+            anyhow::bail!(
+                "stage `{stage_name}` of check `{}` in stored run `{}` declares no expected exchange, so the trace cannot show the repair",
+                reference.check,
+                reference.run_id
+            );
+        }
+        if check_stage_exchange(root, manifest, &run_dir, reference, &stage)? {
+            supported = true;
+        }
+    }
+    if !supported {
+        anyhow::bail!(
+            "check `{}` in stored run `{}` exercises only scenarios that cannot support a claim, so the claim is blocked, not passed",
+            reference.check,
+            reference.run_id
+        );
+    }
+    Ok(InspectedCheck {
+        regression,
+        covers: regression && check.change_ids.iter().any(|id| id == change_id),
+    })
+}
+
+/// Check one stored stage test result against its required outcome.
+///
+/// A killed, signalled, or unbuilt harness fails the stage. An empty
+/// case list fails it too: no stored case means no test ran. A green
+/// stage needs every stored case passed. A red stage needs a failing
+/// case plus the snapshotted diagnostic in the stored output. One
+/// invocation runs one check, so every stored case belongs to it.
+fn check_stage_cases(
+    run_dir: &Path,
+    reference: &RunReference,
+    stage: &StoredStageRecord,
+    want_red: bool,
+) -> anyhow::Result<()> {
+    if stage.timed_out {
+        anyhow::bail!(
+            "test process for stage `{}` of check `{}` in stored run `{}` hit the deadline and was killed",
+            stage.stage,
+            reference.check,
+            reference.run_id
+        );
+    }
+    if let Some(signal) = stage.signal {
+        anyhow::bail!(
+            "test process for stage `{}` of check `{}` in stored run `{}` died on signal {signal}",
+            stage.stage,
+            reference.check,
+            reference.run_id
+        );
+    }
+    if stage.build_failed {
+        anyhow::bail!(
+            "harness for stage `{}` of check `{}` in stored run `{}` did not build, so the stage shows no behaviour",
+            stage.stage,
+            reference.check,
+            reference.run_id
+        );
+    }
+    if stage.cases.is_empty() {
+        anyhow::bail!(
+            "stage `{}` of check `{}` in stored run `{}` records no test cases, so no test ran",
+            stage.stage,
+            reference.check,
+            reference.run_id
+        );
+    }
+    if want_red {
+        if stage.exit_code == Some(0) {
+            anyhow::bail!(
+                "stage `{}` of check `{}` in stored run `{}` exited 0, but the red stage needs a failure",
+                stage.stage,
+                reference.check,
+                reference.run_id
+            );
+        }
+        if stage.cases.iter().all(|case| case.passed) {
+            anyhow::bail!(
+                "stage `{}` of check `{}` in stored run `{}` passed, but the red stage needs a failure",
+                stage.stage,
+                reference.check,
+                reference.run_id
+            );
+        }
+        let Some(wanted) = &stage.expected_diagnostic else {
+            anyhow::bail!(
+                "stage `{}` of check `{}` in stored run `{}` declares no expected diagnostic, so the failure proves nothing",
+                stage.stage,
+                reference.check,
+                reference.run_id
+            );
+        };
+        let combined = stage_case_output(run_dir, reference, stage);
+        if !diagnostic_matches(wanted, &combined) {
+            anyhow::bail!(
+                "stage `{}` of check `{}` in stored run `{}` failed without the expected diagnostic, so the failure is not the intended break",
+                stage.stage,
+                reference.check,
+                reference.run_id
+            );
+        }
+        return Ok(());
+    }
+    if let Some(failed) = stage.cases.iter().find(|case| !case.passed) {
+        anyhow::bail!(
+            "test `{}` failed in stage `{}` of check `{}` in stored run `{}` where a pass was required",
+            failed.name,
+            stage.stage,
+            reference.check,
+            reference.run_id
+        );
+    }
+    if stage.exit_code != Some(0) {
+        anyhow::bail!(
+            "stage `{}` of check `{}` in stored run `{}` exited without a zero status where a pass was recorded",
+            stage.stage,
+            reference.check,
+            reference.run_id
+        );
+    }
+    Ok(())
+}
+
+/// Join stored case outputs with the captured test streams.
+///
+/// The diagnostic may live in a case message or in the process output,
+/// so every source joins here before matching. Missing stream files
+/// read as empty.
+fn stage_case_output(
+    run_dir: &Path,
+    reference: &RunReference,
+    stage: &StoredStageRecord,
+) -> String {
+    let mut parts = Vec::new();
+    for case in &stage.cases {
+        if !case.output.trim().is_empty() {
+            parts.push(case.output.clone());
+        }
+    }
+    let stage_dir = run_dir.join(&reference.check).join(&stage.stage);
+    for name in ["stdout.log", "stderr.log"] {
+        if let Ok(text) = std::fs::read_to_string(stage_dir.join(name)) {
+            parts.push(text);
+        }
+    }
+    parts.join("\n")
+}
+
+/// Report whether stored output carries one expected diagnostic.
+fn diagnostic_matches(diagnostic: &StoredDiagnostic, output: &str) -> bool {
+    match diagnostic {
+        StoredDiagnostic::Substring(text) => output.contains(text),
+        StoredDiagnostic::Pattern { regex } => match regex::Regex::new(regex) {
+            Ok(pattern) => pattern.is_match(output),
+            Err(_) => false,
+        },
+    }
+}
+
+/// Check one stored stage trace against its snapshotted exchanges.
+///
+/// The spec inputs are rehashed against the stage record, the scenario
+/// directory is reloaded, and every expected exchange must appear in
+/// the trace as received, validated, and answered with the declared
+/// response. Unexpected, invalid, or unanswered entries fail the stage.
+/// The result reports whether any expected scenario can support a
+/// claim.
+fn check_stage_exchange(
+    root: &Path,
+    manifest: &AttemptRecord,
+    run_dir: &Path,
+    reference: &RunReference,
+    stage: &StoredStageRecord,
+) -> anyhow::Result<bool> {
+    if !stage.check.is_empty() && stage.check != reference.check {
+        anyhow::bail!(
+            "stage `{}` of check `{}` in stored run `{}` names check `{}`, so the record does not belong to the claim",
+            stage.stage,
+            reference.check,
+            reference.run_id,
+            stage.check
+        );
+    }
+    let pair = crate::state::layout::pair_dir(root, &manifest.old_spec_hash, &manifest.new_spec_hash)
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "cannot locate the spec pair for the claim: {err:#}, so the exchange cannot be rechecked"
+            )
+        })?;
+    let spec_path = match stage.spec_version.as_str() {
+        "old" => crate::state::pair::inputs_old_path(&pair),
+        "new" => crate::state::pair::inputs_new_path(&pair),
+        _ => {
+            anyhow::bail!(
+                "stage `{}` of check `{}` in stored run `{}` declares spec version `{}`, need `old` or `new`",
+                stage.stage,
+                reference.check,
+                reference.run_id,
+                stage.spec_version
+            );
+        }
+    };
+    let bytes = std::fs::read(&spec_path).map_err(|err| {
+        anyhow::anyhow!(
+            "cannot read spec inputs at {}: {err:#}, so the exchange cannot be rechecked",
+            spec_path.display()
+        )
+    })?;
+    let actual = crate::state::layout::sha256_hex(&bytes);
+    if actual != stage.spec_sha256 {
+        anyhow::bail!(
+            "spec inputs at {} hash {actual} but the stage ran against {}, so the exchange cannot be rechecked",
+            spec_path.display(),
+            stage.spec_sha256
+        );
+    }
+    let spec: serde_json::Value = serde_json::from_slice(&bytes).map_err(|err| {
+        anyhow::anyhow!(
+            "cannot parse spec inputs at {}: {err:#}, so the exchange cannot be rechecked",
+            spec_path.display()
+        )
+    })?;
+    let scenarios_dir = Path::new(&stage.scenarios_dir);
+    let scenarios =
+        crate::stub::load_scenarios(scenarios_dir, &spec, &stage.spec_sha256).map_err(|err| {
+            anyhow::anyhow!(
+                "scenario directory {} cannot be reloaded: {err:#}, so the exchange cannot be rechecked",
+                scenarios_dir.display()
+            )
+        })?;
+    let mut by_id = std::collections::HashMap::new();
+    for scenario in &scenarios {
+        by_id.insert(scenario.id.as_str(), scenario);
+    }
+    let stage_dir = run_dir.join(&reference.check).join(&stage.stage);
+    let trace = crate::stub::read_trace(&stage_dir.join("requests.jsonl")).map_err(|err| {
+        anyhow::anyhow!(
+            "trace for stage `{}` of check `{}` in stored run `{}` cannot be read: {err:#}, so the exchange is broken",
+            stage.stage,
+            reference.check,
+            reference.run_id
+        )
+    })?;
+    for exchange in &stage.expected_exchange {
+        let Some(scenario) = by_id.get(exchange.scenario.as_str()) else {
+            anyhow::bail!(
+                "stage `{}` of check `{}` in stored run `{}` expects unknown scenario `{}`",
+                stage.stage,
+                reference.check,
+                reference.run_id,
+                exchange.scenario
+            );
+        };
+        let wanted = served_body_hash(&scenario.response.body);
+        let hit = trace.iter().any(|entry| {
+            entry.scenario_id.as_deref() == Some(exchange.scenario.as_str())
+                && entry.method.eq_ignore_ascii_case(&exchange.method)
+                && crate::stub::template_matches(&exchange.path, &entry.path)
+                && entry.request_valid
+                && entry.response_written
+                && entry.response_status == scenario.response.status
+                && entry.response_body_sha256 == wanted
+        });
+        if !hit {
+            anyhow::bail!(
+                "expected exchange `{}` {} {} was not received, validated, and answered in the trace for stage `{}` of check `{}` in stored run `{}`",
+                exchange.scenario,
+                exchange.method,
+                exchange.path,
+                stage.stage,
+                reference.check,
+                reference.run_id
+            );
+        }
+    }
+    for entry in &trace {
+        match entry.scenario_id.as_deref() {
+            None => {
+                anyhow::bail!(
+                    "unexpected request {} {} reached no scenario in the trace for stage `{}` of check `{}` in stored run `{}`",
+                    entry.method,
+                    entry.path,
+                    stage.stage,
+                    reference.check,
+                    reference.run_id
+                );
+            }
+            Some(seen) => {
+                if !stage
+                    .expected_exchange
+                    .iter()
+                    .any(|wanted| wanted.scenario == seen)
+                {
+                    anyhow::bail!(
+                        "request {} {} hit scenario `{seen}`, which stage `{}` of check `{}` in stored run `{}` does not expect",
+                        entry.method,
+                        entry.path,
+                        stage.stage,
+                        reference.check,
+                        reference.run_id
+                    );
+                }
+                if !entry.request_valid {
+                    anyhow::bail!(
+                        "request {} {} for scenario `{seen}` failed validation in the trace for stage `{}` of check `{}` in stored run `{}`",
+                        entry.method,
+                        entry.path,
+                        stage.stage,
+                        reference.check,
+                        reference.run_id
+                    );
+                }
+                if !entry.response_written {
+                    anyhow::bail!(
+                        "response for scenario `{seen}` was not fully written in the trace for stage `{}` of check `{}` in stored run `{}`",
+                        stage.stage,
+                        reference.check,
+                        reference.run_id
+                    );
+                }
+            }
+        }
+    }
+    Ok(stage.expected_exchange.iter().any(|exchange| {
+        by_id
+            .get(exchange.scenario.as_str())
+            .is_some_and(|scenario| scenario.supports_claim)
+    }))
+}
+
+/// Hash a served scenario response body the way the stub hashes it.
+///
+/// A missing body sends zero bytes. Any other value travels in its
+/// canonical JSON form.
+fn served_body_hash(body: &Option<serde_json::Value>) -> String {
+    match body {
+        Some(value) => crate::stub::body_sha256_hex(&serde_json::to_vec(value).unwrap_or_default()),
+        None => crate::stub::body_sha256_hex(&[]),
+    }
+}
+
+/// Find one stored run directory by id under a migration.
+///
+/// The walk covers the whole migration tree up to a fixed depth, so
+/// runs stored beside a nested manifest are found as well as runs in
+/// the top-level runs directory. The first sorted hit wins.
+fn find_run_dir(migration: &Path, run_id: &str) -> Option<PathBuf> {
+    let mut hits = Vec::new();
+    collect_run_dirs(migration, 0, run_id, &mut hits);
+    hits.sort();
+    hits.into_iter().next()
+}
+
+/// Collect stored run directories with one id under a directory.
+///
+/// Pending temp files stay excluded, so interrupted writers never
+/// appear in lookups.
+fn collect_run_dirs(dir: &Path, depth: usize, run_id: &str, out: &mut Vec<PathBuf>) {
+    if depth > MAX_RUN_WALK_DEPTH {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if crate::state::atomic::is_pending_temp(&path) {
+            continue;
+        }
+        if !path.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some(run_id)
+            && path.join("run.json").is_file()
+        {
+            out.push(path);
+        } else {
+            collect_run_dirs(&path, depth + 1, run_id, out);
+        }
+    }
+}
+
+/// List stored run ids under a migration for refusal messages.
+///
+/// The walk mirrors the lookup. Results sort, and the message caps the
+/// listing so one crowded tree cannot flood the output.
+fn known_run_ids(migration: &Path) -> String {
+    let mut ids = Vec::new();
+    collect_known_run_ids(migration, 0, &mut ids);
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return "no stored runs were found".to_string();
+    }
+    const SHOWN: usize = 8;
+    let mut text = ids
+        .iter()
+        .take(SHOWN)
+        .map(|id| format!("`{id}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ids.len() > SHOWN {
+        text.push_str(&format!(" ({} more)", ids.len() - SHOWN));
+    }
+    format!("known: {text}")
+}
+
+/// Collect parent names of every run record under a directory.
+fn collect_known_run_ids(dir: &Path, depth: usize, out: &mut Vec<String>) {
+    if depth > MAX_RUN_WALK_DEPTH {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if crate::state::atomic::is_pending_temp(&path) {
+            continue;
+        }
+        if path.is_file() {
+            if path.file_name().and_then(|name| name.to_str()) == Some("run.json")
+                && let Some(name) = path
+                    .parent()
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
+            {
+                out.push(name.to_string());
+            }
+            continue;
+        }
+        if path.is_dir() {
+            collect_known_run_ids(&path, depth + 1, out);
+        }
+    }
+}
+
+/// Read one stored run record.
+///
+/// A missing or misshapen file fails with the path named, so callers
+/// can tell a lost artefact apart from a failed check.
+fn read_run_record(run_dir: &Path) -> anyhow::Result<StoredRunRecord> {
+    let path = run_dir.join("run.json");
+    let bytes =
+        std::fs::read(&path).with_context(|| format!("read run record {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse run record {}", path.display()))
+}
+
+/// Read one stored stage record.
+///
+/// A missing or misshapen file fails with the path named, so callers
+/// can tell a lost artefact apart from a failed check.
+fn read_stage_record(
+    run_dir: &Path,
+    check: &str,
+    stage: &str,
+) -> anyhow::Result<StoredStageRecord> {
+    let path = run_dir.join(check).join(stage).join("stage.json");
+    let bytes =
+        std::fs::read(&path).with_context(|| format!("read stage record {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse stage record {}", path.display()))
 }
 
 /// Report capture change ids named more than once.
@@ -341,9 +1178,11 @@ struct RawEntry {
 /// without a problem or a verdict. Required ids without any entry become
 /// missing problems in required order. Valid entries get their evidence
 /// rechecked against the repository.
+#[allow(clippy::too_many_arguments)]
 fn parse_ledger(
     bytes: &[u8],
     repo: &Path,
+    manifest: &AttemptRecord,
     required: &[String],
     required_set: &HashSet<&str>,
     known_set: &HashSet<&str>,
@@ -439,7 +1278,7 @@ fn parse_ledger(
             continue;
         }
         match parse_entry(id, raw) {
-            Ok(entry) => check_entry(id, entry, repo, problems, dispositions),
+            Ok(entry) => check_entry(id, entry, repo, manifest, problems, dispositions),
             Err(message) => {
                 problems.push(Problem::new(id, Problem::MALFORMED_OUTCOME, message));
                 dispositions.insert(
@@ -524,12 +1363,16 @@ fn parse_entry(id: &str, raw: &serde_json::Value) -> Result<RawEntry, String> {
 ///
 /// Unknown outcome words fail as malformed. Every evidence reference is
 /// resolved against the repository again, so deleted files and invented
-/// line numbers fail here. Verified claims always fail until a verification
-/// runner exists that can back them with a passing run.
+/// line numbers fail here. Verified claims are rechecked against the
+/// stored runs: the run must exist, its check must cover the change and
+/// carry passing stages, the patched commit must match the consumer
+/// state under review, and every stage trace must show the expected
+/// exchange.
 fn check_entry(
     id: &str,
     entry: RawEntry,
     repo: &Path,
+    manifest: &AttemptRecord,
     problems: &mut Vec<Problem>,
     dispositions: &mut IndexMap<String, EntryView>,
 ) {
@@ -608,10 +1451,32 @@ fn check_entry(
         );
         return;
     }
+    if outcome == ledger::Outcome::FixedAndVerified
+        && let Err(err) = validate_fixed_claim(repo, manifest, id, &entry.evidence)
+    {
+        problems.push(Problem::new(
+            id,
+            Problem::STALE_VERIFICATION,
+            format!("ledger entry for change {id} claims verification without a usable passing run: {err:#}"),
+        ));
+        dispositions.insert(
+            id.to_string(),
+            EntryView {
+                outcome: entry.outcome_word,
+                evidence: entry.evidence,
+                note: entry.note,
+                valid: false,
+                ready: false,
+            },
+        );
+        return;
+    }
 
     let ready = matches!(
         outcome,
-        ledger::Outcome::UnaffectedInApplication | ledger::Outcome::NoUsageFound
+        ledger::Outcome::FixedAndVerified
+            | ledger::Outcome::UnaffectedInApplication
+            | ledger::Outcome::NoUsageFound
     );
     dispositions.insert(
         id.to_string(),
@@ -988,7 +1853,7 @@ mod tests {
     }
 
     #[test]
-    fn verified_claims_are_stale_without_a_runner() {
+    fn verified_claims_without_a_stored_run_are_stale() {
         let repo = tempfile::tempdir().unwrap();
         std::fs::write(repo.path().join("notes.md"), "checked\n").unwrap();
         let (manifest, capture) = binding(&"a".repeat(64), &"b".repeat(64));
@@ -1185,6 +2050,926 @@ mod tests {
                 .problems
                 .iter()
                 .any(|p| p.id == "vc1_nobody" && p.code == Problem::UNKNOWN)
+        );
+    }
+
+    /// One committed git repository with a pinned code file.
+    fn git_repo() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(dir.path().join("app.ts"), "export {};\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "base"]);
+        let output = git(&["rev-parse", "HEAD"]);
+        let head = String::from_utf8(output.stdout).unwrap();
+        (dir, head.trim().to_string())
+    }
+
+    /// Embedded contract bytes with their hashes.
+    fn spec_pair() -> (Vec<u8>, Vec<u8>, String, String) {
+        let (old, _) = crate::stub::embedded_spec(&crate::cli::SpecVersion::Old);
+        let (next, _) = crate::stub::embedded_spec(&crate::cli::SpecVersion::New);
+        let old_hash = crate::state::layout::sha256_hex(old);
+        let next_hash = crate::state::layout::sha256_hex(next);
+        (old.to_vec(), next.to_vec(), old_hash, next_hash)
+    }
+
+    /// One asset body that validates under both embedded specs.
+    fn claim_asset(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "checksum": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+            "deviceAssetId": "device-0",
+            "deviceId": "device-1",
+            "duration": "0:00:01.000000",
+            "fileCreatedAt": "2024-09-27T10:00:00.000Z",
+            "fileModifiedAt": "2024-09-27T10:00:00.000Z",
+            "hasMetadata": true,
+            "id": id,
+            "isArchived": false,
+            "isFavorite": false,
+            "isOffline": false,
+            "isTrashed": false,
+            "localDateTime": "2024-09-27T10:00:00.000Z",
+            "originalFileName": "photo-0.jpg",
+            "originalPath": "/photos/photo-0.jpg",
+            "ownerId": "550e8400-e29b-41d4-a716-446655440001",
+            "thumbhash": "3OcRJwh4d3h6eIeIh3h2e3h4gQ",
+            "type": "IMAGE",
+            "updatedAt": "2024-09-27T10:00:00.000Z",
+            "stack": null
+        })
+    }
+
+    /// Old-contract search response holding one asset.
+    fn claim_old_body() -> serde_json::Value {
+        serde_json::json!({
+            "albums": {"count": 0, "facets": [], "items": [], "total": 0},
+            "assets": {
+                "count": 1,
+                "facets": [],
+                "items": [claim_asset("asset-r1")],
+                "nextPage": null,
+                "total": 1
+            }
+        })
+    }
+
+    /// New-contract random response holding one asset.
+    fn claim_new_body() -> serde_json::Value {
+        serde_json::Value::Array(vec![claim_asset("asset-r1")])
+    }
+
+    /// One scenario file value for a random-search fixture.
+    fn claim_scenario(spec_hash: &str, body: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": "random-search",
+            "change_ids": ["vc1_claim"],
+            "spec_sha256": spec_hash,
+            "request": {"method": "POST", "path": "/search/random"},
+            "response": {"status": 200, "body": body}
+        })
+    }
+
+    /// One trace entry for a served random-search exchange.
+    fn claim_trace(body: &serde_json::Value) -> serde_json::Value {
+        let bytes = serde_json::to_vec(body).unwrap();
+        serde_json::json!({
+            "scenario_id": "random-search",
+            "method": "POST",
+            "path": "/search/random",
+            "request_valid": true,
+            "request_detail": "body matches the contract schema",
+            "response_status": 200,
+            "response_body_sha256": crate::stub::body_sha256_hex(&bytes),
+            "response_written": true
+        })
+    }
+
+    /// Stored cases matching one fabricated stage verdict.
+    ///
+    /// A red verdict carries a failing case with the declared
+    /// diagnostic. Any other verdict carries a passing case.
+    fn stage_cases(verdict: &str) -> serde_json::Value {
+        if verdict == "expected-red" {
+            serde_json::json!([
+                {"name": "verify_random_picker", "passed": false,
+                 "output": "assertion failed: random picker ids are wrong"}
+            ])
+        } else {
+            serde_json::json!([
+                {"name": "verify_random_picker", "passed": true, "output": ""}
+            ])
+        }
+    }
+
+    /// Stored run world with fabricated artefacts under a git checkout.
+    struct ClaimWorld {
+        /// Guard for the git repository holding state and scenarios.
+        _repo: tempfile::TempDir,
+        /// Canonical repository path used for lookups.
+        repo: std::path::PathBuf,
+        /// Attempt manifest bound to the embedded spec hashes.
+        manifest: AttemptRecord,
+        /// Capture record bound to the same hashes.
+        capture: CaptureRecord,
+        /// Diff document with one breaking change.
+        document: DiffDocument,
+        /// Stored run id under the migration.
+        run_id: String,
+        /// Migration directory holding the run tree.
+        migration: std::path::PathBuf,
+    }
+
+    /// Build a world where the stored run fully backs the claim.
+    fn claim_world() -> ClaimWorld {
+        let (repo_dir, head) = git_repo();
+        let repo = repo_dir.path().canonicalize().unwrap();
+        let (old_bytes, new_bytes, old_hash, new_hash) = spec_pair();
+        let manifest = AttemptRecord {
+            schema_version: crate::state::SCHEMA_VERSION,
+            attempt_id: "attempt".to_string(),
+            old_spec_hash: old_hash.clone(),
+            new_spec_hash: new_hash.clone(),
+            capture_id: "capture".to_string(),
+            repo_path: repo.display().to_string(),
+            baseline_commit: head.clone(),
+            scope: Vec::new(),
+            sethu_version: "0.1.0".to_string(),
+        };
+        let capture = CaptureRecord {
+            schema_version: crate::state::SCHEMA_VERSION,
+            capture_id: "capture".to_string(),
+            generator_name: "vimanam".to_string(),
+            generator_version: "1.3.0".to_string(),
+            invocation: Vec::new(),
+            vimanam_schema_version: 1,
+            old_spec_hash: old_hash.clone(),
+            new_spec_hash: new_hash.clone(),
+        };
+        let document = mixed_document(&old_hash, &new_hash, &[("vc1_claim", Severity::Breaking)]);
+        let root = crate::state::layout::state_root(&repo);
+        let pair = crate::state::layout::pair_dir(&root, &old_hash, &new_hash).unwrap();
+        std::fs::create_dir_all(crate::state::layout::pair_inputs_dir(&pair)).unwrap();
+        std::fs::write(crate::state::pair::inputs_old_path(&pair), &old_bytes).unwrap();
+        std::fs::write(crate::state::pair::inputs_new_path(&pair), &new_bytes).unwrap();
+        let scenarios_old = repo.join("scenarios-old");
+        let scenarios_new = repo.join("scenarios-new");
+        std::fs::create_dir_all(&scenarios_old).unwrap();
+        std::fs::create_dir_all(&scenarios_new).unwrap();
+        std::fs::write(
+            scenarios_old.join("random.json"),
+            serde_json::to_vec_pretty(&claim_scenario(&old_hash, &claim_old_body())).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            scenarios_new.join("random.json"),
+            serde_json::to_vec_pretty(&claim_scenario(&new_hash, &claim_new_body())).unwrap(),
+        )
+        .unwrap();
+        let migration = crate::state::layout::migration_dir(&root, "attempt");
+        let run_id = "run-claim".to_string();
+        write_claim_run(
+            &migration,
+            &run_id,
+            &head,
+            &old_hash,
+            &new_hash,
+            &scenarios_old,
+            &scenarios_new,
+            &claim_old_body(),
+            &claim_new_body(),
+            "picker",
+            "regression",
+            true,
+            &["vc1_claim".to_string()],
+            "pass",
+            "expected-red",
+            "pass",
+        );
+        ClaimWorld {
+            _repo: repo_dir,
+            repo,
+            manifest,
+            capture,
+            document,
+            run_id,
+            migration,
+        }
+    }
+
+    /// Write one fabricated run with three stages and clean traces.
+    #[allow(clippy::too_many_arguments)]
+    fn write_claim_run(
+        migration: &std::path::Path,
+        run_id: &str,
+        head: &str,
+        old_hash: &str,
+        new_hash: &str,
+        scenarios_old: &std::path::Path,
+        scenarios_new: &std::path::Path,
+        old_body: &serde_json::Value,
+        new_body: &serde_json::Value,
+        check: &str,
+        role: &str,
+        verified: bool,
+        change_ids: &[String],
+        old_verdict: &str,
+        red_verdict: &str,
+        patched_verdict: &str,
+    ) {
+        let run_dir = migration.join("runs").join(run_id);
+        let record = serde_json::json!({
+            "run_id": run_id,
+            "harness_hash": "abc",
+            "harness_changed": false,
+            "sethu_version": "0.1.0",
+            "nextest_version": "nextest",
+            "checks": [
+                {"name": check, "role": role, "change_ids": change_ids,
+                 "verified": verified, "stages": []}
+            ]
+        });
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(
+            run_dir.join("run.json"),
+            serde_json::to_vec_pretty(&record).unwrap(),
+        )
+        .unwrap();
+        for (stage, commit, spec, spec_hash, scenarios, body, verdict) in [
+            (
+                "original-old",
+                "baseline",
+                "old",
+                old_hash,
+                scenarios_old,
+                old_body,
+                old_verdict,
+            ),
+            (
+                "original-new",
+                "baseline",
+                "new",
+                new_hash,
+                scenarios_new,
+                new_body,
+                red_verdict,
+            ),
+            (
+                "patched-new",
+                head,
+                "new",
+                new_hash,
+                scenarios_new,
+                new_body,
+                patched_verdict,
+            ),
+        ] {
+            let stage_dir = run_dir.join(check).join(stage);
+            std::fs::create_dir_all(&stage_dir).unwrap();
+            let stored = serde_json::json!({
+                "stage": stage,
+                "check": check,
+                "change_ids": change_ids,
+                "expected_diagnostic": "random picker ids",
+                "expected_exchange": [
+                    {"scenario": "random-search", "method": "POST", "path": "/search/random"}
+                ],
+                "commit": commit,
+                "spec_version": spec,
+                "spec_sha256": spec_hash,
+                "scenarios_dir": scenarios.display().to_string(),
+                "verdict": verdict,
+                "detail": "",
+                "exit_code": if verdict == "expected-red" { 101 } else { 0 },
+                "signal": null,
+                "timed_out": false,
+                "build_failed": false,
+                "cases": stage_cases(verdict),
+            });
+            std::fs::write(
+                stage_dir.join("stage.json"),
+                serde_json::to_vec_pretty(&stored).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                stage_dir.join("requests.jsonl"),
+                format!(
+                    "{}\n",
+                    String::from_utf8(serde_json::to_vec(&claim_trace(body)).unwrap()).unwrap()
+                ),
+            )
+            .unwrap();
+        }
+    }
+
+    /// Evaluate a world with one fixed claim on the single change.
+    fn claim_report(world: &ClaimWorld, evidence: &[&str]) -> Evaluation {
+        let evidence: Vec<String> = evidence.iter().map(|item| item.to_string()).collect();
+        let ledger = serde_json::json!({
+            "schema_version": 1,
+            "dispositions": {
+                "vc1_claim": {"current": {"outcome": "fixed_and_verified", "evidence": evidence}}
+            }
+        });
+        let bytes = serde_json::to_vec(&ledger).unwrap();
+        run(
+            &world.manifest,
+            &world.capture,
+            &world.document,
+            Some(&bytes),
+            &world.repo,
+        )
+    }
+
+    /// Read the single problem of a refused claim report.
+    fn single_problem(report: &Evaluation) -> &Problem {
+        assert!(
+            !report.accounted,
+            "expected the claim to fail, got: {report:?}"
+        );
+        assert_eq!(
+            report.problems.len(),
+            1,
+            "expected one problem, got: {report:?}"
+        );
+        assert_eq!(report.problems[0].code, Problem::STALE_VERIFICATION);
+        &report.problems[0]
+    }
+
+    #[test]
+    fn run_references_parse_run_and_check() {
+        let parsed = parse_run_reference("run:run-1/picker").unwrap();
+        assert_eq!(parsed.run_id, "run-1");
+        assert_eq!(parsed.check, "picker");
+        for bad in ["run:only-run", "run:/picker", "run:", "run", "picker", ""] {
+            assert!(
+                parse_run_reference(bad).is_err(),
+                "expected a refusal for `{bad}`"
+            );
+        }
+    }
+
+    #[test]
+    fn stored_run_with_a_clean_trace_validates() {
+        let world = claim_world();
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        assert!(
+            report.accounted,
+            "expected no problems, got: {:?}",
+            report.problems
+        );
+        assert!(report.ready);
+        assert!(report.problems.is_empty());
+        let view = &report.dispositions["vc1_claim"];
+        assert!(view.valid);
+        assert!(view.ready);
+        assert_eq!(
+            exit_code(report.accounted, report.ready, true),
+            std::process::ExitCode::SUCCESS
+        );
+    }
+
+    #[test]
+    fn missing_run_is_refused_with_known_ids() {
+        let world = claim_world();
+        let report = claim_report(&world, &["run:run-ghost/picker", "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("no stored run"),
+            "got: {}",
+            problem.message
+        );
+        assert!(
+            problem.message.contains(&world.run_id),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn unknown_check_is_refused_with_known_names() {
+        let world = claim_world();
+        let run_ref = format!("run:{}/ghost", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("no check"),
+            "got: {}",
+            problem.message
+        );
+        assert!(
+            problem.message.contains("picker"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn unverified_check_cannot_back_a_claim() {
+        let world = claim_world();
+        rewrite_run_check(
+            &world,
+            "picker",
+            "regression",
+            false,
+            &["vc1_claim".to_string()],
+        );
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("did not verify"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    /// Rewrite the single check summary inside a fabricated run record.
+    fn rewrite_run_check(
+        world: &ClaimWorld,
+        check: &str,
+        role: &str,
+        verified: bool,
+        change_ids: &[String],
+    ) {
+        let path = world
+            .migration
+            .join("runs")
+            .join(&world.run_id)
+            .join("run.json");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record["checks"] = serde_json::json!([
+            {"name": check, "role": role, "change_ids": change_ids,
+             "verified": verified, "stages": []}
+        ]);
+        std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn guard_only_reference_is_refused() {
+        let world = claim_world();
+        rewrite_run_check(&world, "picker", "guard", true, &["vc1_claim".to_string()]);
+        for stage in ["original-old", "original-new", "patched-new"] {
+            rewrite_stage_verdict(&world, "picker", stage, "pass");
+        }
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("only guard"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    /// Rewrite one fabricated stage verdict with matching cases.
+    fn rewrite_stage_verdict(world: &ClaimWorld, check: &str, stage: &str, verdict: &str) {
+        let path = world
+            .migration
+            .join("runs")
+            .join(&world.run_id)
+            .join(check)
+            .join(stage)
+            .join("stage.json");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record["verdict"] = serde_json::Value::String(verdict.to_string());
+        record["cases"] = stage_cases(verdict);
+        record["exit_code"] = serde_json::json!(if verdict == "expected-red" { 101 } else { 0 });
+        std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn uncovered_change_is_refused() {
+        let world = claim_world();
+        rewrite_run_check(
+            &world,
+            "picker",
+            "regression",
+            true,
+            &["vc1_other".to_string()],
+        );
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("covers"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn run_on_another_commit_is_stale() {
+        let world = claim_world();
+        let run_ref = format!("run:{}/picker", world.run_id);
+        rewrite_stage_commit(&world, "picker", "patched-new", "deadbeef");
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("no longer matches"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    /// Rewrite one fabricated stage commit.
+    fn rewrite_stage_commit(world: &ClaimWorld, check: &str, stage: &str, commit: &str) {
+        let path = world
+            .migration
+            .join("runs")
+            .join(&world.run_id)
+            .join(check)
+            .join(stage)
+            .join("stage.json");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record["commit"] = serde_json::Value::String(commit.to_string());
+        std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn red_stage_without_a_failure_is_refused() {
+        let world = claim_world();
+        rewrite_stage_verdict(&world, "picker", "original-new", "pass");
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("expected-red"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    /// Patch one field of a fabricated stage record.
+    fn patch_stage_json(
+        world: &ClaimWorld,
+        check: &str,
+        stage: &str,
+        key: &str,
+        value: serde_json::Value,
+    ) {
+        let path = world
+            .migration
+            .join("runs")
+            .join(&world.run_id)
+            .join(check)
+            .join(stage)
+            .join("stage.json");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record[key] = value;
+        std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn red_stage_without_the_diagnostic_is_refused() {
+        let world = claim_world();
+        patch_stage_json(
+            &world,
+            "picker",
+            "original-new",
+            "cases",
+            serde_json::json!([
+                {"name": "verify_random_picker", "passed": false,
+                 "output": "connection refused before any request"}
+            ]),
+        );
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("without the expected diagnostic"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn red_stage_with_zero_exit_is_refused() {
+        let world = claim_world();
+        patch_stage_json(
+            &world,
+            "picker",
+            "original-new",
+            "exit_code",
+            serde_json::json!(0),
+        );
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("exited 0"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn green_stage_with_a_failing_case_is_refused() {
+        let world = claim_world();
+        patch_stage_json(
+            &world,
+            "picker",
+            "patched-new",
+            "cases",
+            serde_json::json!([
+                {"name": "verify_random_picker", "passed": false,
+                 "output": "assertion failed: random picker ids are wrong"}
+            ]),
+        );
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("where a pass was required"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn stage_without_cases_is_refused() {
+        let world = claim_world();
+        patch_stage_json(
+            &world,
+            "picker",
+            "patched-new",
+            "cases",
+            serde_json::Value::Array(Vec::new()),
+        );
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("no test cases"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn broken_trace_exchange_is_refused() {
+        let world = claim_world();
+        let path = world
+            .migration
+            .join("runs")
+            .join(&world.run_id)
+            .join("picker")
+            .join("patched-new")
+            .join("requests.jsonl");
+        std::fs::write(path, "{\"scenario_id\":null,\"method\":\"GET\",\"path\":\"/elsewhere\",\"request_valid\":false,\"request_detail\":\"no scenario matches\",\"response_status\":599,\"response_body_sha256\":\"abc\",\"response_written\":true}\n").unwrap();
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem
+                .message
+                .contains("not received, validated, and answered")
+                || problem.message.contains("unexpected request"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn stage_without_an_expected_exchange_is_refused() {
+        let world = claim_world();
+        let path = world
+            .migration
+            .join("runs")
+            .join(&world.run_id)
+            .join("picker")
+            .join("patched-new")
+            .join("stage.json");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record["expected_exchange"] = serde_json::Value::Array(Vec::new());
+        std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        let run_ref = format!("run:{}/picker", world.run_id);
+        let report = claim_report(&world, &[&run_ref, "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("no expected exchange"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn bare_run_reference_without_a_check_is_refused() {
+        let world = claim_world();
+        let report = claim_report(&world, &["run:bare-run", "app.ts:1"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("run:<run-id>/<check>"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    #[test]
+    fn free_text_never_satisfies_verification() {
+        let world = claim_world();
+        let report = claim_report(&world, &["looks fixed to me"]);
+        let problem = single_problem(&report);
+        assert!(
+            problem.message.contains("run:<run-id>/<check>"),
+            "got: {}",
+            problem.message
+        );
+    }
+
+    /// One spec whose response schema carries a discriminator.
+    fn discriminated_spec() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "openapi": "3.0.0",
+            "info": {"title": "Things", "version": "1"},
+            "paths": {
+                "/thing": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "discriminator": {"propertyName": "kind"},
+                                            "properties": {"kind": {"type": "string"}},
+                                            "required": ["kind"]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn unsupported_only_scenarios_block_the_claim() {
+        let (repo_dir, head) = git_repo();
+        let repo = repo_dir.path().canonicalize().unwrap();
+        let spec_bytes = discriminated_spec();
+        let spec_hash = crate::state::layout::sha256_hex(&spec_bytes);
+        let manifest = AttemptRecord {
+            schema_version: crate::state::SCHEMA_VERSION,
+            attempt_id: "attempt".to_string(),
+            old_spec_hash: spec_hash.clone(),
+            new_spec_hash: spec_hash.clone(),
+            capture_id: "capture".to_string(),
+            repo_path: repo.display().to_string(),
+            baseline_commit: head.clone(),
+            scope: Vec::new(),
+            sethu_version: "0.1.0".to_string(),
+        };
+        let capture = CaptureRecord {
+            schema_version: crate::state::SCHEMA_VERSION,
+            capture_id: "capture".to_string(),
+            generator_name: "vimanam".to_string(),
+            generator_version: "1.3.0".to_string(),
+            invocation: Vec::new(),
+            vimanam_schema_version: 1,
+            old_spec_hash: spec_hash.clone(),
+            new_spec_hash: spec_hash.clone(),
+        };
+        let document = mixed_document(&spec_hash, &spec_hash, &[("vc1_claim", Severity::Breaking)]);
+        let root = crate::state::layout::state_root(&repo);
+        let pair = crate::state::layout::pair_dir(&root, &spec_hash, &spec_hash).unwrap();
+        std::fs::create_dir_all(crate::state::layout::pair_inputs_dir(&pair)).unwrap();
+        std::fs::write(crate::state::pair::inputs_old_path(&pair), &spec_bytes).unwrap();
+        std::fs::write(crate::state::pair::inputs_new_path(&pair), &spec_bytes).unwrap();
+        let body = serde_json::json!({"kind": "widget"});
+        let scenarios = repo.join("scenarios");
+        std::fs::create_dir_all(&scenarios).unwrap();
+        std::fs::write(
+            scenarios.join("thing.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "id": "thing",
+                "change_ids": ["vc1_claim"],
+                "spec_sha256": spec_hash,
+                "request": {"method": "GET", "path": "/thing"},
+                "response": {"status": 200, "body": body}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let loaded = crate::stub::load_scenarios(
+            &scenarios,
+            &serde_json::from_slice::<serde_json::Value>(&spec_bytes).unwrap(),
+            &spec_hash,
+        )
+        .unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(
+            !loaded[0].supports_claim,
+            "the discriminator scenario must not support a claim"
+        );
+        let migration = crate::state::layout::migration_dir(&root, "attempt");
+        let run_dir = migration.join("runs").join("run-claim");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(
+            run_dir.join("run.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "run_id": "run-claim",
+                "checks": [
+                    {"name": "picker", "role": "regression",
+                     "change_ids": ["vc1_claim"], "verified": true, "stages": []}
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let trace_bytes = serde_json::to_vec(&serde_json::json!({
+            "scenario_id": "thing",
+            "method": "GET",
+            "path": "/thing",
+            "request_valid": true,
+            "request_detail": "path matches the contract",
+            "response_status": 200,
+            "response_body_sha256": crate::stub::body_sha256_hex(&serde_json::to_vec(&body).unwrap()),
+            "response_written": true
+        }))
+        .unwrap();
+        for (stage, commit, verdict) in [
+            ("original-old", "baseline", "pass"),
+            ("original-new", "baseline", "expected-red"),
+            ("patched-new", head.as_str(), "pass"),
+        ] {
+            let stage_dir = run_dir.join("picker").join(stage);
+            std::fs::create_dir_all(&stage_dir).unwrap();
+            let red = verdict == "expected-red";
+            std::fs::write(
+                stage_dir.join("stage.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "stage": stage,
+                    "check": "picker",
+                    "change_ids": ["vc1_claim"],
+                    "expected_diagnostic": "thing ids",
+                    "expected_exchange": [
+                        {"scenario": "thing", "method": "GET", "path": "/thing"}
+                    ],
+                    "commit": commit,
+                    "spec_version": "new",
+                    "spec_sha256": spec_hash,
+                    "scenarios_dir": scenarios.display().to_string(),
+                    "verdict": verdict,
+                    "detail": "",
+                    "exit_code": if red { 101 } else { 0 },
+                    "signal": null,
+                    "timed_out": false,
+                    "build_failed": false,
+                    "cases": [
+                        {"name": "verify_thing", "passed": !red,
+                         "output": if red { "assertion failed: thing ids are wrong" } else { "" }}
+                    ]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                stage_dir.join("requests.jsonl"),
+                format!("{}\n", String::from_utf8(trace_bytes.clone()).unwrap()),
+            )
+            .unwrap();
+        }
+        let ledger = serde_json::json!({
+            "schema_version": 1,
+            "dispositions": {
+                "vc1_claim": {"current": {"outcome": "fixed_and_verified",
+                                          "evidence": ["run:run-claim/picker", "app.ts:1"]}}
+            }
+        });
+        let bytes = serde_json::to_vec(&ledger).unwrap();
+        let report = run(&manifest, &capture, &document, Some(&bytes), &repo);
+        assert!(!report.accounted);
+        assert_eq!(report.problems.len(), 1);
+        assert_eq!(report.problems[0].code, Problem::STALE_VERIFICATION);
+        assert!(
+            report.problems[0].message.contains("blocked, not passed"),
+            "got: {}",
+            report.problems[0].message
         );
     }
 }

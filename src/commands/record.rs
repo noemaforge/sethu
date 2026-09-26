@@ -22,6 +22,8 @@ pub const STATUS: Status = Status::Available;
 /// outcome and its evidence, then stores one current disposition per id
 /// with replaced dispositions kept as history in the same file. Writes
 /// are atomic. Refusals change nothing and explain what is missing.
+/// Verified claims are rechecked against the stored runs before
+/// anything is written.
 pub fn run(args: &RecordArgs) -> anyhow::Result<ExitCode> {
     let repo = working_repo()?;
     let root = layout::state_root(&repo);
@@ -54,6 +56,9 @@ pub fn run_on(repo: &Path, migration: &Path, args: &RecordArgs) -> anyhow::Resul
     }
     let summary = ledger::summarize(&checked);
     ledger::check_evidence(outcome, &summary, args.note.as_deref())?;
+    if outcome == ledger::Outcome::FixedAndVerified {
+        crate::check::validate_fixed_claim(repo, &manifest, &args.id, &args.evidence)?;
+    }
 
     let mut stored = ledger::load_ledger(migration)?;
     stored.record(
