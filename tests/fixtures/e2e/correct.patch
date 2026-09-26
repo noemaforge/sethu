@@ -1,0 +1,31 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -236,7 +236,27 @@ impl ImmichClient {
+ 
+     /// Run a random search and return one page of assets.
+     pub fn search_random(&self, page: u64) -> Result<SearchResponse, Error> {
+-        self.post("/search/random", &PageBody { page })
++        let url = format!("{}/search/random", self.base_url);
++        let response = self
++            .http
++            .post(&url)
++            .json(&PageBody { page })
++            .send()
++            .map_err(Error::Http)?;
++        if !response.status().is_success() {
++            return Err(Error::Status(response.status().as_u16()));
++        }
++        let text = response.text().map_err(Error::Http)?;
++        if let Ok(items) = serde_json::from_str::<Vec<Asset>>(&text) {
++            return Ok(SearchResponse {
++                albums: AlbumResults::default(),
++                assets: AssetResults {
++                    count: items.len() as u64,
++                    items,
++                },
++            });
++        }
++        parse_search_response(&text)
+     }
+ 
+     /// Run a smart search for a text query.

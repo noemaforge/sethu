@@ -1,0 +1,18 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -155,7 +155,14 @@ pub struct SearchResponse {
+ 
+ /// Parse one search response body for any search route.
+ pub fn parse_search_response(body: &str) -> Result<SearchResponse, Error> {
+-    serde_json::from_str(body).map_err(Error::Parse)
++    let items: Vec<Asset> = serde_json::from_str(body).map_err(Error::Parse)?;
++    Ok(SearchResponse {
++        albums: AlbumResults::default(),
++        assets: AssetResults {
++            count: items.len() as u64,
++            items,
++        },
++    })
+ }
+ 
+ /// Page body for random search.
