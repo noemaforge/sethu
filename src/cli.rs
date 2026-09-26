@@ -14,6 +14,7 @@ pub struct Cli {
     pub attempt: Option<String>,
 
     #[command(subcommand)]
+    /// The subcommand to run.
     pub command: Command,
 }
 
@@ -146,6 +147,7 @@ pub struct RecordArgs {
 
 /// Recognised outcomes for `sethu record`.
 #[derive(Debug, Clone, ValueEnum)]
+#[value(rename_all = "snake_case")]
 pub enum Outcome {
     /// The change was fixed and the fix was verified by a passing run.
     FixedAndVerified,
