@@ -26,18 +26,47 @@ const TEST_NAME: &str = "full_workflow_without_assistance";
 static HEAVY: Mutex<()> = Mutex::new(());
 
 /// Shared target directory reused by every cargo build the script starts.
+///
+/// The static publishes the path only. The directory itself is owned by
+/// a cleanup guard held for the whole run, never by this static, since
+/// a static value is never dropped and would strand the directory.
 static TARGET: OnceLock<PathBuf> = OnceLock::new();
 
-/// Shared target directory, leaked for the life of the test process.
+/// Cleanup guard for the shared target directory.
+///
+/// Dropping the guard removes the directory, so no cargo-sized dir
+/// survives the run, even when the workflow fails partway. Crash
+/// leftovers keep their process id in the name and stay safe to delete.
+struct TargetCleanup {
+    path: PathBuf,
+}
+
+impl Drop for TargetCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Shared target path for every cargo build the script starts.
+///
+/// The path is scoped to this process id, so concurrent runs never
+/// share a directory.
 fn shared_target_dir() -> PathBuf {
     TARGET
         .get_or_init(|| {
-            let dir = tempfile::tempdir().expect("keep a shared cargo target directory");
-            let path = dir.path().to_path_buf();
-            std::mem::forget(dir);
-            path
+            std::env::temp_dir().join(format!("sethu-e2e-target-{}", std::process::id()))
         })
         .clone()
+}
+
+/// Publish the shared target path and hand back its cleanup guard.
+///
+/// The caller holds the guard until the run ends. Dropping it removes
+/// the directory.
+fn hold_shared_target_dir() -> TargetCleanup {
+    let path = shared_target_dir();
+    std::fs::create_dir_all(&path).expect("keep a shared cargo target directory");
+    TargetCleanup { path }
 }
 
 /// Build the test command for the sethu binary with a shared target dir.
@@ -606,6 +635,24 @@ fn probe_default_masking(repo: &Path, baseline: &str, harness_tests: &Path) {
     );
 }
 
+/// Dropping the cleanup guard removes its directory.
+#[test]
+fn shared_target_cleanup_removes_its_directory() {
+    let _serial = HEAVY.lock().expect("hold the workflow lock");
+    let probe =
+        std::env::temp_dir().join(format!("sethu-e2e-cleanup-probe-{}", std::process::id()));
+    {
+        std::fs::create_dir_all(&probe).expect("create the probe directory");
+        let _cleanup = TargetCleanup {
+            path: probe.clone(),
+        };
+    }
+    assert!(
+        !probe.exists(),
+        "dropping the cleanup guard must remove the directory"
+    );
+}
+
 #[test]
 fn full_workflow_without_assistance() {
     if !vimanam_available() {
@@ -613,6 +660,7 @@ fn full_workflow_without_assistance() {
         return;
     }
     let _guard = HEAVY.lock().expect("hold the workflow lock");
+    let _target = hold_shared_target_dir();
 
     let holder = clone_demo();
     let repo = holder
