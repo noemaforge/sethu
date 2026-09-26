@@ -3,6 +3,8 @@
 //! The binary entry point calls [`run`]. Integration tests import the
 //! modules declared here directly.
 
+/// Accounting and readiness for one migration attempt.
+pub mod check;
 /// Command line shapes for every subcommand.
 pub mod cli;
 /// One module per subcommand.
