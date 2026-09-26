@@ -15,6 +15,8 @@ pub mod context;
 pub mod install;
 /// Shared origin for captured changes.
 pub mod provenance;
+/// Reviewable migration reports from validated state.
+pub mod report;
 /// Versioned state files for the state tree.
 pub mod state;
 /// Fixture server pieces for contract-sensitive behaviour.
@@ -46,7 +48,7 @@ pub fn dispatch(cli: &Cli) -> anyhow::Result<ExitCode> {
         Command::Check(args) => check_selected(cli, args),
         Command::Stub(args) => commands::stub::run(args),
         Command::Verify(args) => commands::verify::run(args),
-        Command::Report(args) => commands::report::run(args),
+        Command::Report(args) => report_selected(cli, args),
         Command::Scan(args) => commands::scan::run(args),
         Command::Capabilities(args) => commands::capabilities::run(args),
     }
@@ -81,4 +83,20 @@ fn check_selected(cli: &Cli, args: &cli::CheckArgs) -> anyhow::Result<ExitCode> 
     let root = crate::state::layout::state_root(&repo);
     let migration = commands::record::resolve_migration(&root, Some(wanted))?;
     commands::check::run_on(&repo, &migration, args)
+}
+
+/// Resolve the attempt selector, then report on that migration.
+///
+/// Without a selector this keeps the single migration fallback with its
+/// current errors. A selector resolves by id or unique prefix through the
+/// same lookup that recording uses, so unknown and ambiguous values fail
+/// the same way before anything runs.
+fn report_selected(cli: &Cli, args: &cli::ReportArgs) -> anyhow::Result<ExitCode> {
+    let Some(wanted) = cli.attempt.as_deref() else {
+        return commands::report::run(args);
+    };
+    let repo = commands::report::working_repo()?;
+    let root = crate::state::layout::state_root(&repo);
+    let migration = commands::record::resolve_migration(&root, Some(wanted))?;
+    commands::report::run_on(&repo, &migration, args)
 }
