@@ -1,12 +1,10 @@
 //! Tests for state primitives: atomic writes, envelopes, and lookups.
 
-#[path = "../src/state/mod.rs"]
-mod state;
-
 use std::path::{Path, PathBuf};
 
-use state::atomic;
-use state::layout;
+use sethu::state;
+use sethu::state::atomic;
+use sethu::state::layout;
 use state::{
     CaptureFile, ChangeRef, ChangesFile, Installation, LedgerEntry, LedgerFile, MigrationManifest,
     OriginsFile, PairFile,

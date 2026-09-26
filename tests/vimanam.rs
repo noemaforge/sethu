@@ -4,13 +4,10 @@
 //! Live tests run the released binary and skip with a named reason when
 //! `vimanam` is absent from PATH. The gate provides the binary on PATH.
 
-#[path = "../src/vimanam.rs"]
-mod vimanam;
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use vimanam::{
+use sethu::vimanam::{
     ChangeKind, DetailLevel, DiffDocument, parse_diff_output, probe_vimanam, render_operation,
     run_diff,
 };

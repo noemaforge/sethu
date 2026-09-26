@@ -9,10 +9,6 @@
 //! Records keep the ids and severities that Vimanam reported. This module
 //! never recomputes either value.
 
-// Later commands will call these helpers. Until then the binary target
-// would flag them as unused, so this module allows dead code for now.
-#![allow(dead_code)]
-
 use std::path::Path;
 use std::process::Command;
 

@@ -4,10 +4,6 @@
 //! unknown versions instead of guessing. Writers encode deterministically and
 //! store bytes through atomic writes, so files land whole or not at all.
 
-// Later commands will call these helpers. Until then the binary target would
-// flag them as unused, so this module allows dead code for now.
-#![allow(dead_code)]
-
 pub mod atomic;
 pub mod layout;
 

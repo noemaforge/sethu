@@ -6,6 +6,7 @@ rust-version = "1.96"
 description = "Trace OpenAPI changes into your application, repair them, and prove it."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/noemaforge/sethu"
+exclude = [".worktrees"]
 
 [[bin]]
 name = "sethu"
