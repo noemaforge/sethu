@@ -9,6 +9,7 @@ use clap::Parser;
 
 mod cli;
 mod commands;
+mod state;
 
 use cli::{Cli, Command};
 
