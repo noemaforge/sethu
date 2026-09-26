@@ -803,3 +803,56 @@ fn wrong_spec_identity_refuses_before_stages() {
         "a refused run must leave no artefacts"
     );
 }
+
+#[test]
+fn relative_manifest_path_verifies_without_consumer_litter() {
+    let _guard = HEAVY.lock().unwrap();
+    let _clone = clone_demo();
+    let repo = _clone.path().join("consumer");
+    let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+    let patched = commit_edit(
+        &repo,
+        "src/lib.rs",
+        CORRECT_PATCH_OLD,
+        CORRECT_PATCH_NEW,
+        "give random search its own array path",
+    );
+    let area = tempfile::tempdir().unwrap();
+    write_harness(area.path());
+    write_manifest(area.path(), &repo, &baseline, &patched);
+
+    sethu()
+        .args(["verify", "--freeze", "--manifest", "verify-manifest.json"])
+        .current_dir(area.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("frozen"));
+
+    sethu()
+        .args(["verify", "--manifest", "verify-manifest.json"])
+        .current_dir(area.path())
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("random-picker: verified"));
+
+    let (run_dir, record) = only_run(area.path());
+    for check in record["checks"].as_array().unwrap() {
+        assert_eq!(check["verified"], true, "{check}");
+    }
+    let red = stage_record(&run_dir, "random-picker", "original-new");
+    assert_eq!(red["verdict"], "expected-red");
+    assert!(
+        !red["cases"].as_array().unwrap().is_empty(),
+        "the red stage must run cases instead of reporting zero parsed"
+    );
+    assert!(
+        !repo.join("runs").exists(),
+        "a relative manifest must not plant run directories in the consumer"
+    );
+    let list = git(&repo, &["worktree", "list", "--porcelain"]);
+    let trees = list
+        .lines()
+        .filter(|line| line.starts_with("worktree "))
+        .count();
+    assert_eq!(trees, 1, "no stage worktree may linger: {list}");
+}

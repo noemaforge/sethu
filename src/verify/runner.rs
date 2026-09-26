@@ -226,7 +226,7 @@ pub fn run(args: &VerifyArgs, manifest_arg: Option<&Path>) -> anyhow::Result<Exi
             return Ok(ExitCode::SUCCESS);
         }
     }
-    let (manifest, _) = load_manifest(manifest_path)?;
+    let (manifest, manifest_dir) = load_manifest(manifest_path)?;
     let selected = select_checks(&manifest, manifest_path, &args.check)?;
     let frozen = read_freeze(manifest_path)?;
     let (live_hash, _) = hash_harness(&manifest.harness).map_err(|error| {
@@ -242,11 +242,12 @@ pub fn run(args: &VerifyArgs, manifest_arg: Option<&Path>) -> anyhow::Result<Exi
     check_commit(&manifest.repo, &manifest.baseline_commit, "baseline")?;
     check_commit(&manifest.repo, &manifest.patched_commit, "patched")?;
     check_spec_identity(&manifest)?;
-    let runs_dir = manifest_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(crate::verify::manifest::RUNS_DIR_NAME);
+    // Stage worktree paths must stay absolute. Git resolves a relative
+    // `worktree add` path against the consumer repository instead of
+    // the process directory, so a relative manifest parent would plant
+    // the checkout inside the consumer while cargo runs elsewhere.
+    // The manifest loader returns an absolute directory for this.
+    let runs_dir = manifest_dir.join(crate::verify::manifest::RUNS_DIR_NAME);
     let run_id = fresh_run_id();
     let run_dir = runs_dir.join(&run_id);
     std::fs::create_dir_all(&run_dir)

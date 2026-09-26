@@ -131,6 +131,8 @@ pub struct FreezeFile {
 /// Load and validate a manifest file.
 ///
 /// Relative paths resolve against the manifest parent directory.
+/// The returned directory is absolute, so callers can build
+/// artefact paths from it.
 /// Anything structural fails here with the manifest path named.
 pub fn load_manifest(path: &Path) -> anyhow::Result<(Manifest, PathBuf)> {
     let bytes = std::fs::read(path).with_context(|| format!("read manifest {}", path.display()))?;
@@ -143,10 +145,11 @@ pub fn load_manifest(path: &Path) -> anyhow::Result<(Manifest, PathBuf)> {
             manifest.schema_version
         );
     }
-    let dir = path
+    let raw_dir = path
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+    let dir = absolute_dir(&raw_dir);
     manifest.repo = resolve_against(&dir, &manifest.repo);
     manifest.harness = resolve_against(&dir, &manifest.harness);
     manifest.scenarios_old = resolve_against(&dir, &manifest.scenarios_old);
@@ -163,6 +166,24 @@ fn resolve_against(dir: &Path, value: &Path) -> PathBuf {
         value.to_path_buf()
     } else {
         dir.join(value)
+    }
+}
+
+/// Absolutize a manifest directory against the process directory.
+///
+/// The manifest file exists, so canonicalization normally succeeds
+/// and folds away symlinks and dot segments. A lexical join covers
+/// the rare failure without changing the target.
+fn absolute_dir(dir: &Path) -> PathBuf {
+    if let Ok(canonical) = dir.canonicalize() {
+        return canonical;
+    }
+    if dir.is_absolute() {
+        return dir.to_path_buf();
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => cwd.join(dir),
+        Err(_) => dir.to_path_buf(),
     }
 }
 
