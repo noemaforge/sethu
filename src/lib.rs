@@ -7,6 +7,8 @@
 pub mod cli;
 /// One module per subcommand.
 pub mod commands;
+/// Shared origin for captured changes.
+pub mod provenance;
 /// Versioned state files for the state tree.
 pub mod state;
 /// Fixture server pieces for contract-sensitive behaviour.
