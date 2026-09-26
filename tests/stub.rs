@@ -218,6 +218,25 @@ fn split_reply(reply: &[u8]) -> (u16, Vec<u8>) {
     (status, body.as_bytes().to_vec())
 }
 
+/// Wait until the trace file holds the expected entries.
+///
+/// The server flushes each entry after its response bytes reach the
+/// connection, so a client that already holds a full reply can still
+/// be ahead of the flush. The caller waits here before stopping the
+/// server. Entries still missing after the deadline fail the later
+/// assertions as before, so the wait hides no lost entry.
+fn wait_for_trace_entries(path: &Path, expected: usize, deadline: Duration) {
+    let start = std::time::Instant::now();
+    while start.elapsed() < deadline {
+        if let Ok(entries) = read_trace(path)
+            && entries.len() >= expected
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn matched_request_is_served_and_traced() {
     let dir = tempfile::tempdir().unwrap();
@@ -632,9 +651,11 @@ fn stub_command_serves_and_traces() {
         empty_search_response()
     );
 
+    let trace_path = run_dir.path().join("requests.jsonl");
+    wait_for_trace_entries(&trace_path, 2, Duration::from_secs(15));
     child.kill().unwrap();
     child.wait().unwrap();
-    let entries = read_trace(&run_dir.path().join("requests.jsonl")).unwrap();
+    let entries = read_trace(&trace_path).unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].scenario_id, None);
     assert_eq!(entries[0].response_status, 599);

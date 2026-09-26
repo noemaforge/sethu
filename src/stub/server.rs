@@ -10,8 +10,10 @@
 //!
 //! The server runs without an async runtime on top of blocking
 //! connections. Each trace entry is flushed before the next request is
-//! accepted. Stopping the process therefore loses at most the
-//! in-flight entry, which counts as shutting down cleanly.
+//! accepted. The flush for one exchange lands after its response bytes,
+//! so a client can hold a full reply while the entry is still in
+//! flight. A driver waits for the expected entries before stopping the
+//! process. Stopping then loses nothing.
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -135,9 +137,10 @@ impl StubServer {
     /// Serve requests until the process ends.
     ///
     /// Each exchange is traced before the next one is accepted. There
-    /// is no other shutdown path for the command entry point. Stopping
-    /// the process is clean because every finished exchange is already
-    /// flushed to the trace.
+    /// is no other shutdown path for the command entry point. The trace
+    /// entry for one exchange lands after its response bytes, so a
+    /// driver waits for the expected entries before stopping the
+    /// process. Stopping then loses nothing.
     pub fn serve_forever(self) -> anyhow::Result<()> {
         let stop = AtomicBool::new(false);
         self.serve_until(&stop)
