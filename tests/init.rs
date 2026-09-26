@@ -229,12 +229,15 @@ fn rerun_resumes_and_keeps_ledger() {
     let record_before = std::fs::read(layout::capture_file(&capture)).unwrap();
     let origins_before = std::fs::read(layout::origins_file(&capture)).unwrap();
 
-    let mut entries = indexmap::IndexMap::new();
-    entries.insert(
-        "sentinel".to_string(),
-        sethu::state::LedgerEntry::new("unresolved", None),
+    let mut ledger = sethu::state::ledger::Ledger::empty();
+    ledger.record(
+        "sentinel",
+        sethu::state::ledger::Entry::new(
+            sethu::state::ledger::Outcome::Unresolved,
+            Vec::new(),
+            None,
+        ),
     );
-    let ledger = sethu::state::LedgerFile::new(entries);
     sethu::state::write_state_file(&layout::ledger_path(&attempt_dir), &ledger).unwrap();
     let ledger_before = std::fs::read(layout::ledger_path(&attempt_dir)).unwrap();
 

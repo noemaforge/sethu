@@ -365,65 +365,26 @@ impl Ledger {
     }
 }
 
-/// Upgrade a legacy ledger without history into the current shape.
-///
-/// Older files key plain outcome words by change id. Known words carry
-/// over with empty evidence and an empty history. An unknown word fails
-/// with the change id named.
-fn upgrade_legacy(legacy: &crate::state::LedgerFile) -> anyhow::Result<Ledger> {
-    let mut ledger = Ledger::empty();
-    for (id, item) in &legacy.entries {
-        let outcome = Outcome::parse(&item.outcome)
-            .with_context(|| format!("read legacy ledger entry for change {id}"))?;
-        ledger.dispositions.insert(
-            id.clone(),
-            Disposition {
-                current: Entry {
-                    outcome,
-                    evidence: Vec::new(),
-                    note: item.note.clone(),
-                },
-                history: Vec::new(),
-            },
-        );
-    }
-    Ok(ledger)
-}
-
 /// Load the ledger for one migration directory.
 ///
-/// A missing file reads as an empty ledger. A current shape file is
-/// validated and returned. A legacy file without history is upgraded in
-/// memory and rewritten on the next record. Anything else fails with
-/// the file named.
+/// A missing file reads as an empty ledger. A stored file is parsed and
+/// validated before callers trust it. Anything else fails with the file
+/// named.
 pub fn load_ledger(migration: &Path) -> anyhow::Result<Ledger> {
     let path = crate::state::layout::ledger_path(migration);
     if !path.is_file() {
         return Ok(Ledger::empty());
     }
     let bytes = std::fs::read(&path).with_context(|| format!("read ledger {}", path.display()))?;
-    match serde_json::from_slice::<Ledger>(&bytes) {
-        Ok(ledger) => {
-            ledger.validate()?;
-            Ok(ledger)
-        }
-        Err(current_err) => {
-            match serde_json::from_slice::<crate::state::LedgerFile>(&bytes) {
-                Ok(legacy) => {
-                    legacy.validate()?;
-                    upgrade_legacy(&legacy)
-                }
-                Err(_) => Err(anyhow::Error::new(current_err)
-                    .context(format!("parse ledger {}", path.display()))),
-            }
-        }
-    }
+    let ledger: Ledger =
+        serde_json::from_slice(&bytes).context(format!("parse ledger {}", path.display()))?;
+    ledger.validate()?;
+    Ok(ledger)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::LedgerEntry;
 
     fn summary_for(code: usize, files: usize, runs: usize) -> EvidenceSummary {
         EvidenceSummary { code, files, runs }
@@ -605,22 +566,24 @@ mod tests {
     }
 
     #[test]
-    fn legacy_files_upgrade_without_losing_notes() {
-        let mut entries = IndexMap::new();
-        entries.insert(
-            "vc1_aaa".to_string(),
-            LedgerEntry::new("unresolved", Some("kept")),
+    fn dispositions_keep_insertion_order_across_round_trip() {
+        let mut ledger = Ledger::empty();
+        for id in ["vc1_ccc", "vc1_aaa", "vc1_bbb"] {
+            ledger.record(id, Entry::new(Outcome::Unresolved, Vec::new(), None));
+        }
+        let order: Vec<String> = ledger.dispositions.keys().cloned().collect();
+        assert_eq!(order, vec!["vc1_ccc", "vc1_aaa", "vc1_bbb"]);
+        let bytes = serde_json::to_vec_pretty(&ledger).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        let mut positions = Vec::new();
+        for id in &order {
+            positions.push(text.find(id.as_str()).unwrap());
+        }
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "serialized ledger keeps insertion order, got positions {positions:?}"
         );
-        let legacy = crate::state::LedgerFile::new(entries);
-        let upgraded = upgrade_legacy(&legacy).unwrap();
-        let current = &upgraded.dispositions["vc1_aaa"].current;
-        assert_eq!(current.outcome, Outcome::Unresolved);
-        assert_eq!(current.note.as_deref(), Some("kept"));
-        assert!(upgraded.dispositions["vc1_aaa"].history.is_empty());
-
-        let mut bad_entries = IndexMap::new();
-        bad_entries.insert("vc1_aaa".to_string(), LedgerEntry::new("fixed", None));
-        let bad = crate::state::LedgerFile::new(bad_entries);
-        assert!(upgrade_legacy(&bad).is_err());
+        let back: Ledger = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back, ledger);
     }
 }

@@ -14,7 +14,6 @@ pub mod pair;
 use std::path::Path;
 
 use anyhow::Context;
-use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 /// Schema version written into every state file.
@@ -51,33 +50,6 @@ pub fn read_state_file<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::R
     let bytes =
         std::fs::read(path).with_context(|| format!("read state file {}", path.display()))?;
     serde_json::from_slice(&bytes).with_context(|| format!("parse state file {}", path.display()))
-}
-
-/// Installation record stored at the state root.
-///
-/// Writers create it once per repository. Readers use it to confirm that the
-/// tree belongs to this tool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Installation {
-    /// Schema version of this file. Writers always stamp the shared version.
-    pub schema_version: u32,
-    /// Version of the binary that created the tree. Kept for diagnostics.
-    pub sethu_version: String,
-}
-
-impl Installation {
-    /// Create an installation record for a binary version.
-    pub fn new(version: &str) -> Self {
-        Self {
-            schema_version: SCHEMA_VERSION,
-            sethu_version: version.to_string(),
-        }
-    }
-
-    /// Refuse unknown schema versions before callers trust the payload.
-    pub fn validate(&self) -> anyhow::Result<()> {
-        check_schema_version(self.schema_version, "installation")
-    }
 }
 
 /// Pair record stored inside a pair directory.
@@ -185,32 +157,6 @@ impl ChangesFile {
     }
 }
 
-/// Origins map stored inside a capture directory.
-///
-/// The map links each change id to its origin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OriginsFile {
-    /// Schema version of this file. Writers always stamp the shared version.
-    pub schema_version: u32,
-    /// Origin per change id in insertion order. The map keeps write order stable.
-    pub origins: IndexMap<String, String>,
-}
-
-impl OriginsFile {
-    /// Create an origins map from change ids to origins.
-    pub fn new(origins: IndexMap<String, String>) -> Self {
-        Self {
-            schema_version: SCHEMA_VERSION,
-            origins,
-        }
-    }
-
-    /// Refuse unknown schema versions before callers trust the payload.
-    pub fn validate(&self) -> anyhow::Result<()> {
-        check_schema_version(self.schema_version, "origins")
-    }
-}
-
 /// Attempt manifest stored inside a migration directory.
 ///
 /// The manifest keeps the full attempt id and both full spec hashes. Lookups
@@ -241,53 +187,5 @@ impl MigrationManifest {
     /// Refuse unknown schema versions before callers trust the payload.
     pub fn validate(&self) -> anyhow::Result<()> {
         check_schema_version(self.schema_version, "manifest")
-    }
-}
-
-/// One ledger entry keyed by change id.
-///
-/// The outcome stays a plain word here. Later commands interpret it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LedgerEntry {
-    /// Recorded outcome word for the change.
-    pub outcome: String,
-    /// Optional note stored beside the outcome.
-    pub note: Option<String>,
-}
-
-impl LedgerEntry {
-    /// Create a ledger entry from an outcome word and an optional note.
-    pub fn new(outcome: &str, note: Option<&str>) -> Self {
-        Self {
-            outcome: outcome.to_string(),
-            note: note.map(str::to_string),
-        }
-    }
-}
-
-/// Outcome ledger stored inside a migration directory.
-///
-/// Entries stay keyed by change id in insertion order. The map keeps write
-/// order stable across reads and writes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LedgerFile {
-    /// Schema version of this file. Writers always stamp the shared version.
-    pub schema_version: u32,
-    /// Ledger entries per change id in insertion order.
-    pub entries: IndexMap<String, LedgerEntry>,
-}
-
-impl LedgerFile {
-    /// Create a ledger from change ids to entries.
-    pub fn new(entries: IndexMap<String, LedgerEntry>) -> Self {
-        Self {
-            schema_version: SCHEMA_VERSION,
-            entries,
-        }
-    }
-
-    /// Refuse unknown schema versions before callers trust the payload.
-    pub fn validate(&self) -> anyhow::Result<()> {
-        check_schema_version(self.schema_version, "ledger")
     }
 }
