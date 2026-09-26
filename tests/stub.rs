@@ -16,7 +16,7 @@ use std::time::Duration;
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 use sethu::stub::server::{StubServer, loopback_addr};
-use sethu::stub::{Scenario, TraceEntry, body_sha256_hex, load_scenarios, read_trace};
+use sethu::stub::{ParsedBody, Scenario, TraceEntry, body_sha256_hex, load_scenarios, read_trace};
 
 /// Read one pinned spec and its raw bytes by file name.
 fn pinned_spec(name: &str) -> (Vec<u8>, Value) {
@@ -172,7 +172,35 @@ fn round_trip(port: u16, method: &str, target: &str, body: Option<&str>) -> (u16
     stream.write_all(request.as_bytes()).unwrap();
     let mut reply = Vec::new();
     stream.read_to_end(&mut reply).unwrap();
-    let text = String::from_utf8_lossy(&reply).to_string();
+    split_reply(&reply)
+}
+
+/// Send one raw HTTP request with a chunked body and split the reply.
+///
+/// The payload goes out as a single chunk, followed by the closing
+/// zero chunk. Callers use this for bodies without a declared length.
+fn round_trip_chunked(port: u16, method: &str, target: &str, payload: &[u8]) -> (u16, Vec<u8>) {
+    let mut stream = TcpStream::connect(loopback_addr(port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    let head = format!(
+        "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).unwrap();
+    stream
+        .write_all(format!("{:X}\r\n", payload.len()).as_bytes())
+        .unwrap();
+    stream.write_all(payload).unwrap();
+    stream.write_all(b"\r\n0\r\n\r\n").unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).unwrap();
+    split_reply(&reply)
+}
+
+/// Split one raw HTTP reply into its status and body bytes.
+fn split_reply(reply: &[u8]) -> (u16, Vec<u8>) {
+    let text = String::from_utf8_lossy(reply).to_string();
     let (head, body) = match text.find("\r\n\r\n") {
         Some(position) => text.split_at(position + 4),
         None => panic!("reply without header terminator: {text:?}"),
@@ -271,6 +299,50 @@ fn invalid_request_body_is_served_but_marked() {
     assert_eq!(entries[0].scenario_id.as_deref(), Some("create-order"));
     assert!(!entries[0].request_valid);
     assert!(entries[0].request_detail.contains("name"));
+}
+
+#[test]
+fn malformed_body_on_bodiless_operation_is_served_but_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    write_scenario(dir.path(), "a-item.json", &item_scenario());
+    let spec = shop_spec();
+    let scenarios = load_from(dir.path(), &spec, "no-pin");
+
+    let running = Running::spawn(scenarios, spec);
+    let (status, _) = round_trip(running.port, "GET", "/items/42", Some("{not json"));
+    assert_eq!(status, 200);
+    let entries = running.stop_and_trace();
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].scenario_id.as_deref(), Some("get-item"));
+    assert!(!entries[0].request_valid);
+    assert!(
+        entries[0].request_detail.contains("valid JSON"),
+        "{}",
+        entries[0].request_detail
+    );
+}
+
+#[test]
+fn oversized_chunked_body_is_capped_and_marked() {
+    let dir = tempfile::tempdir().unwrap();
+    write_scenario(dir.path(), "a-item.json", &item_scenario());
+    let spec = shop_spec();
+    let scenarios = load_from(dir.path(), &spec, "no-pin");
+
+    let running = Running::spawn(scenarios, spec);
+    let payload = vec![b'x'; 32 * 1024 * 1024 + 1024];
+    let (status, _) = round_trip_chunked(running.port, "GET", "/items/42", &payload);
+    assert_eq!(status, 200);
+    let entries = running.stop_and_trace();
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].scenario_id.as_deref(), Some("get-item"));
+    assert!(!entries[0].request_valid);
+    assert_eq!(
+        entries[0].request_detail,
+        "request body exceeds the read limit"
+    );
 }
 
 #[test]
@@ -643,12 +715,22 @@ fn declared_headers_and_query_narrow_the_match() {
     let mut query = IndexMap::new();
     query.insert("verbose".to_string(), "true".to_string());
     assert!(sethu::stub::scenario_matches(
-        scenario, "GET", "/items/9", &query, &headers, None
+        scenario,
+        "GET",
+        "/items/9",
+        &query,
+        &headers,
+        &ParsedBody::Absent
     ));
     let mut other = IndexMap::new();
     other.insert("verbose".to_string(), "false".to_string());
     assert!(!sethu::stub::scenario_matches(
-        scenario, "GET", "/items/9", &other, &headers, None
+        scenario,
+        "GET",
+        "/items/9",
+        &other,
+        &headers,
+        &ParsedBody::Absent
     ));
     assert!(!sethu::stub::scenario_matches(
         scenario,
@@ -656,6 +738,6 @@ fn declared_headers_and_query_narrow_the_match() {
         "/items/9",
         &query,
         &[],
-        None
+        &ParsedBody::Absent
     ));
 }

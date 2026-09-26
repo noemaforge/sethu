@@ -46,9 +46,11 @@
 //! segment by segment, where a `{name}` segment accepts any single
 //! non-empty segment. Every declared query pair and header pair is
 //! present with an equal value. Header names compare ignoring case. A
-//! declared body requires a byte-identical JSON value after parsing.
-//! Undeclared query pairs, headers, and bodies impose nothing. Files
-//! load in sorted filename order and the first match wins.
+//! declared body requires an equal JSON value after parsing. Key order
+//! and number spelling do not matter. A body that is not valid JSON
+//! never validates. Undeclared query pairs, headers, and bodies impose
+//! nothing on matching. Files load in sorted filename order and the
+//! first match wins.
 //!
 //! ## Validation boundary
 //!
@@ -57,8 +59,9 @@
 //! constructs instead of passing them quietly. A scenario that reaches
 //! any such construct outside the narrow exception below cannot back a
 //! verification claim. Its `supports_claim` flag reads false. The
-//! server still serves it, and the trace keeps the flag, so a later
-//! checker can tell a served fixture from a trusted one.
+//! server still serves it. The trace records the exchange without the
+//! flag, so a later checker recomputes claim support from the fixture
+//! instead of trusting served output.
 //!
 //! Format names outside the validator built-in set stay report-only.
 //! The validator never fails an instance on an unknown format, so such
@@ -103,7 +106,7 @@ pub const TRACE_FILENAME: &str = "requests.jsonl";
 pub const UNEXPECTED_STATUS: u16 = 599;
 
 /// Largest request body the server reads before calling it invalid.
-const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 /// One declared request inside a scenario file.
 #[derive(Debug, Clone, Deserialize)]
@@ -316,30 +319,53 @@ fn response_body_schema(operation: &serde_json::Value, status: u16) -> Option<se
     media.get("schema").cloned()
 }
 
+/// Find one path item object by concrete request path.
+///
+/// Matching is template-aware, so `/items/42` finds `/items/{id}`.
+/// Path-item-level parameters apply to every operation under the item.
+fn find_path_item<'a>(spec: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let paths = spec.get("paths")?.as_object()?;
+    paths
+        .iter()
+        .find(|(template, _)| template_matches(template, path))
+        .map(|(_, item)| item)
+}
+
 /// List the required query parameters of one operation.
 ///
 /// Both operation-level and path-item-level parameter lists count. A
 /// parameter counts only when it sits in `query` and sets
 /// `required: true`.
-fn required_query_params(operation: &serde_json::Value) -> Vec<String> {
+fn required_query_params(
+    operation: &serde_json::Value,
+    path_item: Option<&serde_json::Value>,
+) -> Vec<String> {
     let mut names = Vec::new();
-    if let Some(list) = operation
-        .get("parameters")
-        .and_then(|value| value.as_array())
-    {
-        for parameter in list {
-            let is_query = parameter.get("in").and_then(|value| value.as_str()) == Some("query");
-            let is_required =
-                parameter.get("required").and_then(|value| value.as_bool()) == Some(true);
-            if is_query
-                && is_required
-                && let Some(name) = parameter.get("name").and_then(|value| value.as_str())
-            {
-                names.push(name.to_string());
-            }
-        }
+    collect_required_query_params(operation.get("parameters"), &mut names);
+    if let Some(item) = path_item {
+        collect_required_query_params(item.get("parameters"), &mut names);
     }
     names
+}
+
+/// Push required query names from one parameter list.
+///
+/// A missing or non-array list adds nothing. Duplicates stay in place,
+/// so callers see every declaration.
+fn collect_required_query_params(list: Option<&serde_json::Value>, names: &mut Vec<String>) {
+    let Some(list) = list.and_then(|value| value.as_array()) else {
+        return;
+    };
+    for parameter in list {
+        let is_query = parameter.get("in").and_then(|value| value.as_str()) == Some("query");
+        let is_required = parameter.get("required").and_then(|value| value.as_bool()) == Some(true);
+        if is_query
+            && is_required
+            && let Some(name) = parameter.get("name").and_then(|value| value.as_str())
+        {
+            names.push(name.to_string());
+        }
+    }
 }
 
 /// Validate one instance against one schema value in one direction.
@@ -626,18 +652,63 @@ fn load_one(
     })
 }
 
+/// One request body with malformed bytes kept distinct from an empty body.
+///
+/// An empty body means no payload arrived. Well-formed JSON parses to
+/// a value. Any other non-empty input is malformed, which validation
+/// rejects instead of treating as empty.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParsedBody {
+    /// Only whitespace arrived, or nothing at all.
+    Absent,
+    /// Well-formed JSON input.
+    Value(serde_json::Value),
+    /// Non-empty input that is not valid JSON.
+    Malformed,
+}
+
+impl ParsedBody {
+    /// Parse raw body bytes into the three states.
+    pub fn parse(body: &[u8]) -> Self {
+        if body.iter().all(|byte| byte.is_ascii_whitespace()) {
+            return Self::Absent;
+        }
+        match serde_json::from_slice(body) {
+            Ok(value) => Self::Value(value),
+            Err(_) => Self::Malformed,
+        }
+    }
+
+    /// Report whether the input was non-empty and not valid JSON.
+    pub fn is_malformed(&self) -> bool {
+        matches!(self, Self::Malformed)
+    }
+
+    /// Borrow the parsed value for well-formed JSON input.
+    ///
+    /// Absent and malformed bodies yield none. Matching treats an
+    /// absent body as empty, while validation rejects malformed input.
+    pub fn value(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Absent | Self::Malformed => None,
+        }
+    }
+}
+
 /// Report whether one scenario matches an incoming request.
 ///
 /// The method, path template, declared query pairs, declared headers,
-/// and declared body must all agree. See the module pages for the
-/// exact rules.
+/// and declared body must all agree. A malformed body still matches a
+/// scenario with no declared body. Validation then rejects it. See the
+/// module pages for the exact rules.
 pub fn scenario_matches(
     scenario: &Scenario,
     method: &str,
     path: &str,
     query: &IndexMap<String, String>,
     headers: &[(String, String)],
-    body: Option<&serde_json::Value>,
+    body: &ParsedBody,
 ) -> bool {
     if !scenario.request.method.eq_ignore_ascii_case(method) {
         return false;
@@ -659,7 +730,7 @@ pub fn scenario_matches(
         }
     }
     match &scenario.request.body {
-        Some(wanted) => body == Some(wanted),
+        Some(wanted) => body.value() == Some(wanted),
         None => true,
     }
 }
@@ -667,19 +738,24 @@ pub fn scenario_matches(
 /// Validate one matched request against the contract.
 ///
 /// Required query parameters must be present and the body must fit the
-/// request schema. The flag tells whether the request is valid. The
-/// text names the first problem or confirms the pass.
+/// request schema. A malformed body always fails, even when the
+/// operation takes no body. The flag tells whether the request is
+/// valid. The text names the first problem or confirms the pass.
 pub fn validate_matched_request(
     spec: &serde_json::Value,
     scenario: &Scenario,
     query: &IndexMap<String, String>,
-    body: Option<&serde_json::Value>,
+    body: &ParsedBody,
 ) -> (bool, String) {
     let Some(operation) = find_operation(spec, &scenario.request.method, &scenario.request.path)
     else {
         return (false, "operation left the selected spec".to_string());
     };
-    for name in required_query_params(operation) {
+    if body.is_malformed() {
+        return (false, "request body is not valid JSON".to_string());
+    }
+    let path_item = find_path_item(spec, &scenario.request.path);
+    for name in required_query_params(operation, path_item) {
         if !query.contains_key(&name) {
             return (
                 false,
@@ -689,7 +765,7 @@ pub fn validate_matched_request(
     }
     match request_body_schema(operation) {
         Some(schema_value) => {
-            let Some(seen) = body else {
+            let Some(seen) = body.value() else {
                 let required = operation
                     .get("requestBody")
                     .and_then(|value| value.get("required"))
@@ -710,7 +786,7 @@ pub fn validate_matched_request(
                 validate_instance(&schema_value, &index, Direction::Request, seen);
             (valid, detail)
         }
-        None => match body {
+        None => match body.value() {
             Some(seen) if !body_is_empty(seen) => (
                 false,
                 "request carries a body but the operation takes none".to_string(),
@@ -839,9 +915,93 @@ mod tests {
         let spec = item_spec();
         let operation = find_operation(&spec, "GET", "/items/7").unwrap();
         assert_eq!(
-            required_query_params(operation),
+            required_query_params(operation, None),
             vec!["verbose".to_string()]
         );
+    }
+
+    /// Build a spec with the required query at path-item level.
+    fn path_level_spec() -> serde_json::Value {
+        json!({
+            "openapi": "3.0.0",
+            "info": { "title": "Items", "version": "1" },
+            "paths": {
+                "/items/{id}": {
+                    "parameters": [
+                        { "name": "verbose", "in": "query", "required": true }
+                    ],
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": { "type": "object" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Build a scenario answering the templated read with no declared body.
+    fn bodiless_item_scenario() -> Scenario {
+        Scenario {
+            id: "get-item".to_string(),
+            change_ids: vec![],
+            request: ScenarioRequest {
+                method: "GET".to_string(),
+                path: "/items/{id}".to_string(),
+                query: IndexMap::new(),
+                headers: IndexMap::new(),
+                body: None,
+            },
+            response: ScenarioResponse {
+                status: 200,
+                headers: IndexMap::new(),
+                body: Some(json!({ "id": "42" })),
+            },
+            unsupported: vec![],
+            supports_claim: true,
+        }
+    }
+
+    #[test]
+    fn required_query_params_cover_path_item_level() {
+        let spec = path_level_spec();
+        let operation = find_operation(&spec, "GET", "/items/7").unwrap();
+        let path_item = find_path_item(&spec, "/items/7").unwrap();
+        assert_eq!(
+            required_query_params(operation, Some(path_item)),
+            vec!["verbose".to_string()]
+        );
+        assert!(required_query_params(operation, None).is_empty());
+    }
+
+    #[test]
+    fn omitted_path_item_level_query_fails_validation() {
+        let spec = path_level_spec();
+        let scenario = bodiless_item_scenario();
+        let query = IndexMap::new();
+        let (valid, detail) =
+            validate_matched_request(&spec, &scenario, &query, &ParsedBody::Absent);
+        assert!(!valid);
+        assert!(detail.contains("verbose"), "{detail}");
+    }
+
+    #[test]
+    fn body_parsing_keeps_malformed_distinct_from_absent() {
+        assert_eq!(ParsedBody::parse(b""), ParsedBody::Absent);
+        assert_eq!(ParsedBody::parse(b"  \n\t"), ParsedBody::Absent);
+        assert_eq!(ParsedBody::parse(b"{}"), ParsedBody::Value(json!({})));
+        assert_eq!(ParsedBody::parse(b"{not json"), ParsedBody::Malformed);
+        assert!(ParsedBody::parse(b"{not json").is_malformed());
+        assert!(!ParsedBody::parse(b"").is_malformed());
+        assert_eq!(ParsedBody::parse(b"{}").value(), Some(&json!({})));
+        assert_eq!(ParsedBody::parse(b"").value(), None);
+        assert_eq!(ParsedBody::parse(b"{not json").value(), None);
     }
 
     #[test]

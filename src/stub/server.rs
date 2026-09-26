@@ -13,6 +13,7 @@
 //! accepted. Stopping the process therefore loses at most the
 //! in-flight entry, which counts as shutting down cleanly.
 
+use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -20,8 +21,8 @@ use anyhow::Context;
 use indexmap::IndexMap;
 
 use crate::stub::{
-    TRACE_FILENAME, UNEXPECTED_STATUS, append_trace, body_sha256_hex, body_within_limit,
-    find_operation, parse_query, scenario_matches, validate_matched_request,
+    MAX_BODY_BYTES, ParsedBody, TRACE_FILENAME, UNEXPECTED_STATUS, append_trace, body_sha256_hex,
+    body_within_limit, find_operation, parse_query, scenario_matches, validate_matched_request,
 };
 
 /// Loopback address the stub always binds.
@@ -198,24 +199,20 @@ impl StubServer {
     /// Unexpected requests are also reported on stderr, so they stand
     /// out in the server logs.
     pub fn route(&self, incoming: &Incoming) -> Outcome {
+        let parsed = ParsedBody::parse(&incoming.body);
         for scenario in &self.scenarios {
-            let body_value = parse_body(&incoming.body);
             if !scenario_matches(
                 scenario,
                 &incoming.method,
                 &incoming.path,
                 &incoming.query,
                 &incoming.headers,
-                body_value.as_ref(),
+                &parsed,
             ) {
                 continue;
             }
-            let (request_valid, request_detail) = validate_matched_request(
-                &self.spec,
-                scenario,
-                &incoming.query,
-                body_value.as_ref(),
-            );
+            let (request_valid, request_detail) =
+                validate_matched_request(&self.spec, scenario, &incoming.query, &parsed);
             let body = render_body(&scenario.response.body);
             return Outcome {
                 scenario_id: Some(scenario.id.clone()),
@@ -261,8 +258,9 @@ fn clone_pair(pair: (&String, &String)) -> (String, String) {
 /// Read one connection into a parsed request.
 ///
 /// Bodies larger than the read limit are replaced with an empty body
-/// and reported through the returned flag. Callers treat an oversized
-/// body as an invalid request.
+/// and reported through the returned flag. The cap applies to the
+/// bytes actually read, so chunked bodies without a length get the
+/// same treatment. Callers treat an oversized body as invalid.
 fn read_incoming(request: &mut tiny_http::Request) -> anyhow::Result<(Incoming, bool)> {
     let method = request.method().as_str().to_string();
     let raw_url = request.url().to_string();
@@ -280,15 +278,17 @@ fn read_incoming(request: &mut tiny_http::Request) -> anyhow::Result<(Incoming, 
             )
         })
         .collect::<Vec<_>>();
-    let length = request.body_length().unwrap_or(0);
-    let too_large = !body_within_limit(length);
+    let declared = request.body_length().unwrap_or(0);
     let mut body = Vec::new();
-    if !too_large {
+    if body_within_limit(declared) {
         request
             .as_reader()
+            .take(MAX_BODY_BYTES as u64 + 1)
             .read_to_end(&mut body)
             .with_context(|| "read stub request body")?;
     }
+    let too_large = !body_within_limit(declared) || !body_within_limit(body.len());
+    let body = if too_large { Vec::new() } else { body };
     let path = crate::stub::percent_decode(raw_path);
     let incoming = Incoming {
         method,
@@ -298,17 +298,6 @@ fn read_incoming(request: &mut tiny_http::Request) -> anyhow::Result<(Incoming, 
         body,
     };
     Ok((incoming, too_large))
-}
-
-/// Parse a body as JSON when it is non-empty.
-///
-/// Empty bodies yield none. Invalid JSON also yields none, which keeps
-/// the request routable. Validation then reports the problem.
-fn parse_body(body: &[u8]) -> Option<serde_json::Value> {
-    if body.iter().all(|byte| byte.is_ascii_whitespace()) {
-        return None;
-    }
-    serde_json::from_slice(body).ok()
 }
 
 /// Render a declared response body to bytes.
@@ -440,6 +429,28 @@ mod tests {
         assert_eq!(outcome.status, 200);
         assert!(outcome.request_valid);
         assert_eq!(outcome.body, b"{\"id\":\"42\"}");
+    }
+
+    #[test]
+    fn malformed_body_on_bodiless_operation_is_invalid() {
+        let server = StubServer {
+            server: tiny_http::Server::http(loopback_addr(0)).unwrap(),
+            scenarios: vec![item_scenario()],
+            spec: item_spec(),
+            version_label: "test".to_string(),
+            trace_path: std::path::PathBuf::from("requests.jsonl"),
+        };
+        let mut incoming = item_incoming();
+        incoming.body = b"{not json".to_vec();
+        let outcome = server.route(&incoming);
+        assert_eq!(outcome.scenario_id.as_deref(), Some("get-item"));
+        assert_eq!(outcome.status, 200);
+        assert!(!outcome.request_valid);
+        assert!(
+            outcome.request_detail.contains("valid JSON"),
+            "{}",
+            outcome.request_detail
+        );
     }
 
     #[test]
