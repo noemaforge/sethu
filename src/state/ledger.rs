@@ -159,8 +159,8 @@ fn is_digit_suffix(text: &str) -> bool {
 ///
 /// A `run:` reference with a non empty id counts as a run. A `path:line`
 /// reference must name an existing file, and a missing file fails with
-/// the reference named, since the shape claims a location. Line zero fails
-/// the same way. A bare path
+/// the reference named, since the shape claims a location. An out of
+/// range digit suffix fails the same way. A bare path
 /// that names an existing file counts as a file. Everything else reads
 /// as prose and counts toward nothing.
 pub fn check_reference(repo: &Path, reference: &str) -> anyhow::Result<CheckedEvidence> {
@@ -177,7 +177,7 @@ pub fn check_reference(repo: &Path, reference: &str) -> anyhow::Result<CheckedEv
         && is_digit_suffix(line)
     {
         if !is_line_number(line) {
-            anyhow::bail!("evidence `{reference}` names line zero, line numbers start at one");
+            anyhow::bail!("evidence `{reference}` names line `{line}`, line numbers start at one");
         }
         let target = repo.join(path);
         if !target.is_file() {
@@ -474,6 +474,20 @@ mod tests {
         assert_eq!(missing_bare.kind, EvidenceKind::Text);
         assert!(check_reference(repo.path(), "missing.ts:1").is_err());
         assert!(check_reference(repo.path(), "search.ts:0").is_err());
+    }
+
+    #[test]
+    fn out_of_range_line_suffix_names_the_rejected_value() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::write(repo.path().join("app.ts"), "export {};\n").unwrap();
+        let suffix = "99999999999999999999999";
+        let reference = format!("app.ts:{suffix}");
+        let err = check_reference(repo.path(), &reference).unwrap_err();
+        assert!(
+            err.to_string().contains(suffix),
+            "rejection names the rejected suffix, got: {err}"
+        );
+        assert!(err.to_string().contains("line numbers start at one"));
     }
 
     #[test]

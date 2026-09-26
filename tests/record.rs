@@ -221,6 +221,35 @@ fn unaffected_passes_with_a_code_location() {
 }
 
 #[test]
+fn unaffected_refuses_an_out_of_range_line_suffix() {
+    if !need_vimanam("unaffected_refuses_an_out_of_range_line_suffix") {
+        return;
+    }
+    let setup = setup();
+    write_repo_file(&setup, "app.ts", "export {};\n");
+    let suffix = "99999999999999999999999";
+    let location = format!("app.ts:{suffix}");
+
+    record_cmd(
+        &setup.repo,
+        &[
+            &setup.ids[0],
+            "--outcome",
+            "unaffected_in_application",
+            "--evidence",
+            &location,
+        ],
+    )
+    .assert()
+    .failure()
+    .code(1)
+    .stderr(predicate::str::contains(suffix))
+    .stderr(predicate::str::contains("line numbers start at one"))
+    .stdout(predicate::str::is_empty());
+    assert!(!layout::ledger_path(&setup.migration).exists());
+}
+
+#[test]
 fn unaffected_refuses_free_text_only() {
     if !need_vimanam("unaffected_refuses_free_text_only") {
         return;
