@@ -92,6 +92,8 @@ struct Setup {
     repo: PathBuf,
     /// Change ids from the attempt capture in report order.
     ids: Vec<String>,
+    /// Required change ids (breaking plus review) in report order.
+    required: Vec<String>,
     /// Migration directory holding the manifest and the ledger.
     migration: PathBuf,
 }
@@ -131,10 +133,22 @@ fn setup() -> Setup {
         .iter()
         .map(|item| item.id.clone())
         .collect();
+    let required = document
+        .changes
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.severity,
+                sethu::vimanam::Severity::Breaking | sethu::vimanam::Severity::Review
+            )
+        })
+        .map(|item| item.id.clone())
+        .collect();
     Setup {
         _repo,
         repo,
         ids,
+        required,
         migration,
     }
 }
@@ -215,6 +229,113 @@ fn complete_ledger_with_pending_decision_splits_exits() {
         .code(5)
         .stdout(predicate::str::contains("accounted: yes"))
         .stdout(predicate::str::contains("ready: no"));
+}
+
+/// Record resolved dispositions for exactly the required changes.
+fn fill_required_ledger(setup: &Setup, trace: &str) {
+    for id in &setup.required {
+        let id = id.clone();
+        record(setup, &id, &["no_usage_found", "--evidence", trace]);
+    }
+}
+
+#[test]
+fn required_only_ledger_exits_0_with_27_required() {
+    if !need_vimanam("required_only_ledger_exits_0_with_27_required") {
+        return;
+    }
+    let setup = setup();
+    assert_eq!(setup.required.len(), 27);
+    let trace = write_repo_file(&setup, "trace-notes.md", "searched wrappers\n");
+    fill_required_ledger(&setup, &trace);
+
+    check_cmd(&setup.repo, &[])
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("accounted: yes"))
+        .stdout(predicate::str::contains("ready: yes"))
+        .stdout(predicate::str::contains("required 27"));
+
+    check_cmd(&setup.repo, &["--require-ready"])
+        .assert()
+        .success()
+        .code(0);
+
+    let assert = check_cmd(&setup.repo, &["--json"])
+        .assert()
+        .success()
+        .code(0);
+    let output = assert.get_output();
+    let text = String::from_utf8(output.stdout.clone()).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["required"].as_array().unwrap().len(), 27);
+    assert_eq!(report["problems"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn required_only_ledger_with_blocker_splits_exits() {
+    if !need_vimanam("required_only_ledger_with_blocker_splits_exits") {
+        return;
+    }
+    let setup = setup();
+    assert_eq!(setup.required.len(), 27);
+    let trace = write_repo_file(&setup, "trace-notes.md", "searched wrappers\n");
+    let first = setup.required[0].clone();
+    record(
+        &setup,
+        &first,
+        &[
+            "decision_required",
+            "--evidence",
+            &trace,
+            "--note",
+            "Paging no longer applies, drop it or fetch repeated batches",
+        ],
+    );
+    for id in setup.required.iter().skip(1) {
+        let id = id.clone();
+        record(&setup, &id, &["no_usage_found", "--evidence", &trace]);
+    }
+
+    check_cmd(&setup.repo, &[])
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("accounted: yes"))
+        .stdout(predicate::str::contains("ready: no"));
+
+    check_cmd(&setup.repo, &["--require-ready"])
+        .assert()
+        .failure()
+        .code(5)
+        .stdout(predicate::str::contains("accounted: yes"))
+        .stdout(predicate::str::contains("ready: no"));
+}
+
+#[test]
+fn voluntary_non_breaking_entry_causes_no_problem() {
+    if !need_vimanam("voluntary_non_breaking_entry_causes_no_problem") {
+        return;
+    }
+    let setup = setup();
+    let trace = write_repo_file(&setup, "trace-notes.md", "searched wrappers\n");
+    fill_required_ledger(&setup, &trace);
+
+    let extra = setup
+        .ids
+        .iter()
+        .find(|id| !setup.required.contains(id))
+        .unwrap()
+        .clone();
+    record(&setup, &extra, &["no_usage_found", "--evidence", &trace]);
+
+    check_cmd(&setup.repo, &[])
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("accounted: yes"))
+        .stdout(predicate::str::contains("required 27"));
 }
 
 #[test]
@@ -557,7 +678,7 @@ fn json_report_carries_accounting_and_readiness() {
     assert_eq!(report["ready"], serde_json::Value::Bool(false));
     assert_eq!(
         report["required"].as_array().unwrap().len(),
-        setup.ids.len()
+        setup.required.len()
     );
     assert_eq!(report["problems"].as_array().unwrap().len(), 0);
     assert_eq!(report["not_ready"].as_array().unwrap().len(), 1);

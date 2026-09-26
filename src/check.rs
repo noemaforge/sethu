@@ -18,7 +18,7 @@ use crate::provenance::OriginsDocument;
 use crate::state::attempt::AttemptRecord;
 use crate::state::capture::CaptureRecord;
 use crate::state::ledger;
-use crate::vimanam::DiffDocument;
+use crate::vimanam::{DiffDocument, Severity};
 
 /// Envelope version of the machine readable check report.
 ///
@@ -99,6 +99,10 @@ pub struct Evaluation {
     /// Full id of the checked attempt.
     pub attempt_id: String,
     /// Required change ids in capture report order.
+    ///
+    /// Only breaking and review changes count. Non-breaking changes stay
+    /// outside accounting, so voluntary dispositions for them never appear
+    /// here.
     pub required: Vec<String>,
     /// Declared scope paths from the manifest in stored order.
     pub scope: Vec<String>,
@@ -137,17 +141,26 @@ pub struct Inputs<'a> {
 /// Evaluate one attempt from its loaded state.
 ///
 /// The function never writes. It recomputes the required set from the
-/// capture, compares every stored identity hash, parses the ledger without
-/// leniency for unknown outcomes, and rechecks every evidence reference
-/// against the repository on disk.
+/// capture, keeping only breaking and review changes, compares every
+/// stored identity hash, parses the ledger without leniency for unknown
+/// outcomes, and rechecks every evidence reference against the repository
+/// on disk. Ledger entries for known non-breaking changes are voluntary
+/// coverage and are accepted without any verdict.
 pub fn evaluate(inputs: &Inputs<'_>) -> Evaluation {
     let required: Vec<String> = inputs
         .document
         .changes
         .iter()
+        .filter(|item| matches!(item.severity, Severity::Breaking | Severity::Review))
         .map(|item| item.id.clone())
         .collect();
     let required_set: HashSet<&str> = required.iter().map(String::as_str).collect();
+    let known_set: HashSet<&str> = inputs
+        .document
+        .changes
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect();
 
     let mut problems = Vec::new();
 
@@ -171,6 +184,7 @@ pub fn evaluate(inputs: &Inputs<'_>) -> Evaluation {
             inputs.repo,
             &required,
             &required_set,
+            &known_set,
             &mut problems,
             &mut dispositions,
         ),
@@ -321,8 +335,10 @@ struct RawEntry {
 
 /// Parse the ledger bytes and validate every disposition.
 ///
-/// Structural file faults become ledger scope problems. Unknown ids become
-/// unknown problems in file order. Required ids without any entry become
+/// Structural file faults become ledger scope problems. Ids the capture
+/// never names become unknown problems in file order. Ledger entries for
+/// known non-breaking changes are voluntary coverage and are skipped
+/// without a problem or a verdict. Required ids without any entry become
 /// missing problems in required order. Valid entries get their evidence
 /// rechecked against the repository.
 fn parse_ledger(
@@ -330,6 +346,7 @@ fn parse_ledger(
     repo: &Path,
     required: &[String],
     required_set: &HashSet<&str>,
+    known_set: &HashSet<&str>,
     problems: &mut Vec<Problem>,
     dispositions: &mut IndexMap<String, EntryView>,
 ) {
@@ -389,6 +406,9 @@ fn parse_ledger(
     if let Some(keys) = scan_disposition_keys(bytes) {
         let mut seen = HashSet::new();
         for key in &keys {
+            if known_set.contains(key.as_str()) && !required_set.contains(key.as_str()) {
+                continue;
+            }
             if !seen.insert(key.clone())
                 && !problems
                     .iter()
@@ -408,6 +428,9 @@ fn parse_ledger(
 
     for (id, raw) in entries {
         if !required_set.contains(id.as_str()) {
+            if known_set.contains(id.as_str()) {
+                continue;
+            }
             problems.push(Problem::new(
                 id,
                 Problem::UNKNOWN,
@@ -830,14 +853,35 @@ mod tests {
 
     /// Build a two change diff document bound to two spec hashes.
     fn document(old_hash: &str, new_hash: &str) -> DiffDocument {
-        let change = |id: &str| ChangeRecord {
+        mixed_document(
+            old_hash,
+            new_hash,
+            &[
+                ("vc1_first", Severity::Breaking),
+                ("vc1_second", Severity::Breaking),
+            ],
+        )
+    }
+
+    /// Build a diff document with explicit severities bound to two hashes.
+    fn mixed_document(old_hash: &str, new_hash: &str, rows: &[(&str, Severity)]) -> DiffDocument {
+        let breaking = rows
+            .iter()
+            .filter(|(_, severity)| matches!(severity, Severity::Breaking))
+            .count();
+        let non_breaking = rows
+            .iter()
+            .filter(|(_, severity)| matches!(severity, Severity::NonBreaking))
+            .count();
+        let review = rows.len() - breaking - non_breaking;
+        let change = |(id, severity): &(&str, Severity)| ChangeRecord {
             id: id.to_string(),
             endpoint: EndpointRef {
                 method: "POST".to_string(),
                 path: "/search/random".to_string(),
             },
             kind: crate::vimanam::ChangeKind::ResponseSchemaChanged,
-            severity: Severity::Breaking,
+            severity: severity.clone(),
             details: crate::vimanam::ChangeDetails::default(),
         };
         DiffDocument {
@@ -860,11 +904,11 @@ mod tests {
                 endpoints_added: 0,
                 endpoints_removed: 0,
                 endpoints_changed: 1,
-                breaking: 2,
-                non_breaking: 0,
-                review: 0,
+                breaking,
+                non_breaking,
+                review,
             },
-            changes: vec![change("vc1_first"), change("vc1_second")],
+            changes: rows.iter().map(change).collect(),
         }
     }
 
@@ -1049,5 +1093,98 @@ mod tests {
             std::process::ExitCode::from(5)
         );
         assert_eq!(exit_code(true, true, true), std::process::ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn required_set_keeps_only_breaking_and_review() {
+        let repo = tempfile::tempdir().unwrap();
+        let (manifest, capture) = binding(&"a".repeat(64), &"b".repeat(64));
+        let document = mixed_document(
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &[
+                ("vc1_first", Severity::Breaking),
+                ("vc1_second", Severity::Review),
+                ("vc1_third", Severity::NonBreaking),
+            ],
+        );
+        std::fs::write(repo.path().join("notes.md"), "checked\n").unwrap();
+        let ledger = serde_json::json!({
+            "schema_version": 1,
+            "dispositions": {
+                "vc1_first": {"current": {"outcome": "no_usage_found", "evidence": ["notes.md"]}},
+                "vc1_second": {"current": {"outcome": "no_usage_found", "evidence": ["notes.md"]}}
+            }
+        });
+        let bytes = serde_json::to_vec(&ledger).unwrap();
+        let report = run(&manifest, &capture, &document, Some(&bytes), repo.path());
+        assert_eq!(
+            report.required,
+            vec!["vc1_first".to_string(), "vc1_second".to_string()]
+        );
+        assert!(report.accounted);
+        assert!(report.ready);
+        assert!(report.problems.is_empty());
+    }
+
+    #[test]
+    fn voluntary_non_breaking_entry_causes_no_problem() {
+        let repo = tempfile::tempdir().unwrap();
+        let (manifest, capture) = binding(&"a".repeat(64), &"b".repeat(64));
+        let document = mixed_document(
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &[
+                ("vc1_first", Severity::Breaking),
+                ("vc1_second", Severity::Review),
+                ("vc1_third", Severity::NonBreaking),
+            ],
+        );
+        std::fs::write(repo.path().join("notes.md"), "checked\n").unwrap();
+        let ledger = serde_json::json!({
+            "schema_version": 1,
+            "dispositions": {
+                "vc1_first": {"current": {"outcome": "no_usage_found", "evidence": ["notes.md"]}},
+                "vc1_second": {"current": {"outcome": "no_usage_found", "evidence": ["notes.md"]}},
+                "vc1_third": {"current": {"outcome": "no_usage_found", "evidence": ["notes.md"]}}
+            }
+        });
+        let bytes = serde_json::to_vec(&ledger).unwrap();
+        let report = run(&manifest, &capture, &document, Some(&bytes), repo.path());
+        assert!(report.accounted);
+        assert!(report.ready);
+        assert!(report.problems.is_empty());
+        assert!(!report.dispositions.contains_key("vc1_third"));
+    }
+
+    #[test]
+    fn unknown_id_outside_capture_still_fails() {
+        let repo = tempfile::tempdir().unwrap();
+        let (manifest, capture) = binding(&"a".repeat(64), &"b".repeat(64));
+        let document = mixed_document(
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &[
+                ("vc1_first", Severity::Breaking),
+                ("vc1_third", Severity::NonBreaking),
+            ],
+        );
+        std::fs::write(repo.path().join("notes.md"), "checked\n").unwrap();
+        let ledger = serde_json::json!({
+            "schema_version": 1,
+            "dispositions": {
+                "vc1_first": {"current": {"outcome": "no_usage_found", "evidence": ["notes.md"]}},
+                "vc1_nobody": {"current": {"outcome": "unresolved", "evidence": ["notes.md"]}}
+            }
+        });
+        let bytes = serde_json::to_vec(&ledger).unwrap();
+        let report = run(&manifest, &capture, &document, Some(&bytes), repo.path());
+        assert!(!report.accounted);
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|p| p.id == "vc1_nobody" && p.code == Problem::UNKNOWN)
+        );
     }
 }
