@@ -693,6 +693,24 @@ impl<'a> Converter<'a> {
                         widened.clone().unwrap_or_else(|| value.clone()),
                     );
                 }
+                // A sibling `enum` must also accept null once nullability
+                // widens `type`. Without this, `type` allows null while
+                // `enum` rejects it, so validation still fails.
+                "enum" => {
+                    if widened.is_some()
+                        && let Some(items) = value.as_array()
+                        && !items.iter().any(serde_json::Value::is_null)
+                    {
+                        let mut next = items.clone();
+                        next.push(serde_json::Value::Null);
+                        out.insert(key.clone(), serde_json::Value::Array(next));
+                    } else {
+                        out.insert(
+                            key.clone(),
+                            self.convert_value(value, &child(location, key))?,
+                        );
+                    }
+                }
                 "$ref" => {
                     out.insert(
                         key.clone(),

@@ -116,6 +116,22 @@ fn nullable_type_widens_for_requests() {
 }
 
 #[test]
+fn nullable_enum_accepts_null_for_requests() {
+    let schema = json!({ "type": "string", "enum": ["a", "b"], "nullable": true });
+    let converted = convert(&schema, Direction::Request);
+    assert_eq!(converted.schema["type"], json!(["string", "null"]));
+    assert_eq!(converted.schema["enum"], json!(["a", "b", null]));
+    let found = with_rule(&converted.applications, Rule::NullableType);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].location, "#");
+    assert!(converted.supports_claim());
+    let document = converted.document();
+    assert!(is_valid(&document, &Value::Null));
+    assert!(is_valid(&document, &json!("a")));
+    assert!(!is_valid(&document, &json!("c")));
+}
+
+#[test]
 fn nullable_type_widens_for_responses() {
     let schema = json!({ "type": "string", "minLength": 2, "nullable": true });
     let converted = convert(&schema, Direction::Response);
