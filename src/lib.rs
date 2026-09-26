@@ -9,6 +9,8 @@ pub mod cli;
 pub mod commands;
 /// Versioned state files for the state tree.
 pub mod state;
+/// Fixture server pieces for contract-sensitive behaviour.
+pub mod stub;
 /// Subprocess adapter for the contract diff tool.
 pub mod vimanam;
 
