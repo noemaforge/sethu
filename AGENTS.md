@@ -61,8 +61,8 @@ Every finding carries five columns.
 | **Severity** | C, H, M or L. |
 | **Where** | File path and line number at the reviewed hash. |
 | **What** | The observable defect or false claim. |
-| **Pin** | A failing test or probe that measures the defect independently. |
-| **Mutation** | The one or two line edit that reintroduces the defect. It proves the pin is load-bearing. |
+| **Pin** | A failing test or probe that measures the defect independently. For a document task, the source that contradicts the claim. |
+| **Mutation** | The one or two line edit that reintroduces the defect. It proves the pin is load-bearing. Optional for a document task. |
 
 A finding without a pin is not actionable. A finding without a mutation is not load-bearing.
 
@@ -126,8 +126,26 @@ status:   not-started
   lines landing together are resolved by the orchestrator at rebase.
 - **size** runs XS, S, M, L.
 - **bob** is `no`, `candidate` or `person` (see "Bob and Bobcoins").
-- **status** is `not-started`, `in-progress:<role>:<worktree>`, `done:<hash>` or `blocked:<reason>`.
-  The orchestrator writes it before each handoff, never after.
+- **status** is `not-started`, `in-progress:<role>:<worktree>`, `done:<hash>`, `done:file:<sha12>`
+  or `blocked:<reason>`. The orchestrator writes it before each handoff, never after.
+
+### Document tasks
+
+A task whose `owns` lists only `dev-diary/` paths produces a gitignored file, not a commit. It runs a
+lighter loop.
+
+- **No worktree.** The implementer writes its owned file directly in the main checkout's
+  `dev-diary/`. This is the one exception to the main-checkout rule, and it covers only that file.
+- **The handoff is a hash.** The implementer replies with the file's SHA-256 and one line.
+- **Review works the same way.** A fresh reviewer reads the file and records the hash it reviewed at
+  the top of its round file. A finding's pin is the claim plus the source that contradicts it, such
+  as a documentation URL. The mutation column is optional.
+- **Remediation edits the file.** The next round reviews the new hash.
+- **Nothing lands.** On APPROVE, the orchestrator writes `done:file:<sha12>`. If the file later stops
+  matching that hash, the task returns to review.
+
+A `bob: person` task is simpler still. The person writes the record, and the orchestrator marks it
+`done:file:<sha12>` without a review round.
 
 **Task ids** read `T<phase>.<n>`. A task that needs the person appends `b`, as in `T1.3b`. A number is
 never reused.
