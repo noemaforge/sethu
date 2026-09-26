@@ -34,23 +34,12 @@ fn capabilities_json() -> serde_json::Value {
     serde_json::from_str(&stdout).unwrap()
 }
 
-/// Report whether one command is implemented in this build.
+/// Arguments that reach the stub error for one planned command.
 ///
-/// Per-command stub cases return early once their command flips to
-/// available. The generic case below covers every command that is
-/// still planned, so a newly implemented command skips its old case
-/// instead of failing it.
-fn is_available(name: &str) -> bool {
-    capabilities_json()["commands"][name]["status"] == "available"
-}
-
-/// Arguments that reach the stub error for one command.
-///
-/// Every entry names the command plus the flags its stub case
-/// already uses, so the generic case below stays in step with them.
+/// The planned set test runs each entry and asserts the stub error.
+/// An unknown planned command fails loudly through the fallthrough.
 fn stub_invocation(name: &str) -> Option<Vec<&'static str>> {
     match name {
-        "install" => Some(vec!["install", "/tmp"]),
         "changes" => Some(vec!["changes"]),
         "context" => Some(vec!["context", "vc1_abc123"]),
         "check" => Some(vec!["check"]),
@@ -150,17 +139,34 @@ fn capabilities_help_succeeds() {
 }
 
 #[test]
-fn install_stub_exits_1_with_not_available() {
-    if is_available("install") {
-        return;
-    }
+fn install_fresh_repo_writes_pack_files_with_success() {
+    let scratch = tempfile::tempdir().unwrap();
+    git(scratch.path(), &["init", "-q"]);
+    std::fs::write(scratch.path().join("README.md"), "consumer\n").unwrap();
+    git(scratch.path(), &["add", "."]);
+    git(
+        scratch.path(),
+        &[
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-q",
+            "-m",
+            "baseline",
+        ],
+    );
+    let repo = scratch.path().canonicalize().unwrap();
+
     sethu()
-        .args(["install", "/tmp"])
+        .arg("install")
+        .arg(&repo)
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
+        .success()
+        .stdout(predicate::str::contains("installed into"));
+    assert!(repo.join(".bob/commands/api-upgrade.md").is_file());
+    assert!(repo.join(".sethu/installation.json").is_file());
 }
 
 #[test]
@@ -192,34 +198,6 @@ fn init_list_reports_no_attempts_with_success() {
         .stdout(predicate::str::is_empty())
         .stderr(predicate::str::contains("no attempts"));
     assert!(!repo.path().join(".sethu").exists());
-}
-
-#[test]
-fn changes_stub_exits_1_with_not_available() {
-    if is_available("changes") {
-        return;
-    }
-    sethu()
-        .arg("changes")
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
-}
-
-#[test]
-fn context_stub_exits_1_with_not_available() {
-    if is_available("context") {
-        return;
-    }
-    sethu()
-        .args(["context", "vc1_abc123"])
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
 }
 
 #[test]
@@ -293,20 +271,6 @@ fn record_unresolved_reports_recorded_with_success() {
 }
 
 #[test]
-fn check_stub_exits_1_with_not_available() {
-    if is_available("check") {
-        return;
-    }
-    sethu()
-        .arg("check")
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
-}
-
-#[test]
 fn stub_empty_scenarios_prints_readiness_line() {
     let scenarios = tempfile::tempdir().unwrap();
     let run = tempfile::tempdir().unwrap();
@@ -344,48 +308,6 @@ fn stub_empty_scenarios_prints_readiness_line() {
         readiness.contains("scenarios=0"),
         "unexpected readiness line: {readiness:?}"
     );
-}
-
-#[test]
-fn verify_stub_exits_1_with_not_available() {
-    if is_available("verify") {
-        return;
-    }
-    sethu()
-        .arg("verify")
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
-}
-
-#[test]
-fn report_stub_exits_1_with_not_available() {
-    if is_available("report") {
-        return;
-    }
-    sethu()
-        .arg("report")
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
-}
-
-#[test]
-fn scan_stub_exits_1_with_not_available() {
-    if is_available("scan") {
-        return;
-    }
-    sethu()
-        .args(["scan", "/tmp", "--spec", "openapi.yaml"])
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
 }
 
 #[test]
