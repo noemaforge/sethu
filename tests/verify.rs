@@ -6,11 +6,12 @@
 //! patch fails a guard, and a dead stub yields an invalid red. Every
 //! run uses real stub instances on loopback and fixture scenarios
 //! validated against the pinned specs. Nothing writes to the live
-//! demo checkout. Heavy tests share one target directory and one
-//! lock, so sequential cargo builds reuse compiled dependencies.
+//! demo checkout. Each heavy test builds under its own scratch root
+//! behind one lock, so repeated cargo builds within a test reuse
+//! compiled dependencies.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -27,25 +28,16 @@ const NEW_SHA: &str = "a5c98c5cf35f9b42a412a3aaee7c1e1f597279cc7c8a88cc090d7a7e2
 /// Lock that serialises the heavy cargo-building tests.
 static HEAVY: Mutex<()> = Mutex::new(());
 
-/// Shared target directory reused by every heavy test process.
-static TARGET: OnceLock<PathBuf> = OnceLock::new();
-
-/// Shared target directory, leaked for the life of the test process.
-fn shared_target_dir() -> PathBuf {
-    TARGET
-        .get_or_init(|| {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().to_path_buf();
-            std::mem::forget(dir);
-            path
-        })
-        .clone()
-}
-
-/// Build the test command for the sethu binary with a shared target dir.
-fn sethu() -> Command {
+/// Build the test command for the sethu binary with a target dir.
+///
+/// Callers pass a fixed path under their own scratch root. Each scratch
+/// root is a fresh unique directory, so concurrent runs never share build
+/// outputs. The scratch guard drops at the end of the test and removes
+/// the builds with it, so no target dir survives the run. Every stage of
+/// one test reuses the same path, so repeated cargo builds stay cheap.
+fn sethu(target: &Path) -> Command {
     let mut cmd = Command::cargo_bin("sethu").unwrap();
-    cmd.env("CARGO_TARGET_DIR", shared_target_dir());
+    cmd.env("CARGO_TARGET_DIR", target);
     cmd
 }
 
@@ -449,10 +441,11 @@ fn regression_goes_green_red_green_with_guards() {
         "give random search its own array path",
     );
     let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &patched);
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--freeze", "--manifest"])
         .arg(&manifest)
         .assert()
@@ -460,7 +453,7 @@ fn regression_goes_green_red_green_with_guards() {
         .stdout(predicate::str::contains("frozen"));
     assert!(area.path().join("verify-manifest.json.frozen").is_file());
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest)
         .assert()
@@ -534,16 +527,17 @@ fn naive_shared_parser_patch_fails_a_guard() {
         "parse every search as an array",
     );
     let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &patched);
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--freeze", "--manifest"])
         .arg(&manifest)
         .assert()
         .success();
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest)
         .assert()
@@ -589,15 +583,16 @@ fn freeze_detects_harness_change_and_supersedes() {
         "give random search its own array path",
     );
     let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &patched);
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--freeze", "--manifest"])
         .arg(&manifest)
         .assert()
         .success();
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest)
         .args(["--check", "random-picker"])
@@ -615,7 +610,7 @@ fn freeze_detects_harness_change_and_supersedes() {
     let text = std::fs::read_to_string(&harness_tests).unwrap();
     std::fs::write(&harness_tests, format!("{text}\n// harness tweak\n")).unwrap();
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest)
         .args(["--check", "random-picker"])
@@ -641,11 +636,12 @@ fn dirty_tree_refuses_verify() {
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &baseline);
     std::fs::write(repo.join("scratch-note.txt"), "uncommitted\n").unwrap();
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest)
         .assert()
@@ -692,7 +688,7 @@ fn stopped_stub_yields_invalid_red() {
         .current_dir(&worktree)
         .env("IMMICH_BASE_URL", format!("http://127.0.0.1:{dead_port}"))
         .env("CARGO_NET_OFFLINE", "true")
-        .env("CARGO_TARGET_DIR", shared_target_dir())
+        .env("CARGO_TARGET_DIR", area.path().join("target"))
         .output()
         .unwrap();
     assert!(!output.status.success(), "the dead stub must fail the test");
@@ -759,9 +755,10 @@ fn stopped_stub_yields_invalid_red() {
 #[test]
 fn unknown_check_name_fails_with_known_names() {
     let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
     let repo = area.path().join("consumer");
     let manifest = write_manifest(area.path(), &repo, "base", "patched");
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest)
         .args(["--check", "ghost"])
@@ -773,7 +770,8 @@ fn unknown_check_name_fails_with_known_names() {
 
 #[test]
 fn missing_manifest_flag_is_a_usage_error() {
-    sethu()
+    let target = tempfile::tempdir().unwrap();
+    sethu(target.path())
         .args(["verify"])
         .assert()
         .failure()
@@ -786,13 +784,14 @@ fn wrong_spec_identity_refuses_before_stages() {
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &baseline);
     let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
     value["spec_new_sha256"] = json!("0".repeat(64));
     std::fs::write(&manifest, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest)
         .assert()
@@ -818,17 +817,18 @@ fn relative_manifest_path_verifies_without_consumer_litter() {
         "give random search its own array path",
     );
     let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
     write_harness(area.path());
     write_manifest(area.path(), &repo, &baseline, &patched);
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--freeze", "--manifest", "verify-manifest.json"])
         .current_dir(area.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("frozen"));
 
-    sethu()
+    sethu(&target)
         .args(["verify", "--manifest", "verify-manifest.json"])
         .current_dir(area.path())
         .assert()
