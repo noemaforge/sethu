@@ -7,6 +7,8 @@
 pub mod cli;
 /// One module per subcommand.
 pub mod commands;
+/// Embedded pack and repository installation.
+pub mod install;
 /// Shared origin for captured changes.
 pub mod provenance;
 /// Versioned state files for the state tree.
