@@ -23,9 +23,16 @@ fi
 
 echo "==> Step 4: plan-reference scan"
 FAIL=0
-TRACKED=$(git ls-files -- src/ tests/ Cargo.toml README.md 2>/dev/null || true)
+TRACKED=$(git ls-files 2>/dev/null || true)
 
 for f in $TRACKED; do
+    # Three files name the banned shapes for a legitimate reason, so the
+    # loop leaves them out. This script holds the shapes as search text.
+    # The ignore list holds one as a path rule. The protocol file states
+    # the rule itself.
+    if [ "$f" = tools/check.sh ] || [ "$f" = .gitignore ] || [ "$f" = AGENTS.md ]; then
+        continue
+    fi
     # Task ids: T<digits>.<digits> with optional trailing b
     if grep -nP '\bT[0-9]+\.[0-9]+b?\b' "$f"; then
         echo "FAIL: plan reference (task id) in $f" >&2
