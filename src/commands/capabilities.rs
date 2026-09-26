@@ -155,7 +155,7 @@ fn command_statuses() -> [(&'static str, Status); 10] {
 /// missing or outdated binary marks them unavailable with a reason. The
 /// remaining commands keep their build-time state either way.
 fn needs_vimanam(name: &str) -> bool {
-    matches!(name, "init" | "changes" | "context")
+    matches!(name, "init" | "changes" | "context" | "scan")
 }
 
 /// Translate build-time state into a reported entry.
@@ -396,8 +396,8 @@ mod tests {
     }
 
     #[test]
-    fn diff_dependents_cover_init_changes_and_context() {
-        for name in ["init", "changes", "context"] {
+    fn diff_dependents_cover_diff_commands() {
+        for name in ["init", "changes", "context", "scan"] {
             assert!(needs_vimanam(name), "{name} should need the diff tool");
         }
         for name in [
@@ -407,7 +407,6 @@ mod tests {
             "stub",
             "verify",
             "report",
-            "scan",
             "capabilities",
         ] {
             assert!(!needs_vimanam(name), "{name} should not need the diff tool");

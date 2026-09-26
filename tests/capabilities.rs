@@ -17,7 +17,7 @@ const COMMANDS: [&str; 10] = [
 ];
 
 /// Commands that invoke the contract diff tool at runtime.
-const DIFF_COMMANDS: [&str; 3] = ["init", "changes", "context"];
+const DIFF_COMMANDS: [&str; 4] = ["init", "changes", "context", "scan"];
 
 /// Build the test command for the sethu binary.
 fn sethu() -> Command {
