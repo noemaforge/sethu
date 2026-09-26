@@ -478,6 +478,57 @@ fn repeated_work_never_rewrites_stored_capture() {
 }
 
 #[test]
+fn tampered_severity_blocks_reuse() {
+    if !need_vimanam("tampered_severity_blocks_reuse") {
+        return;
+    }
+    let (_repo, _) = init_git_repo();
+    let repo = _repo.path();
+    let old = fixture("immich/old.json");
+    let new = fixture("immich/new.json");
+
+    init_cmd(&old, &new, repo).assert().success();
+    let root = layout::state_root(&repo.canonicalize().unwrap());
+    let pair = layout::pair_dir(&root, OLD_SHA, NEW_SHA).unwrap();
+    let (_, manifest) = only_attempt(&root);
+    let capture = layout::capture_dir(&pair, &manifest.capture_id);
+    let changes_path = layout::changes_file(&capture);
+
+    let raw = std::fs::read(&changes_path).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let changes = value.get_mut("changes").unwrap().as_array_mut().unwrap();
+    assert!(!changes.is_empty());
+    let severity = changes[0].get("severity").unwrap().as_str().unwrap();
+    let flipped = if severity == "breaking" {
+        "non_breaking"
+    } else {
+        "breaking"
+    };
+    changes[0]["severity"] = serde_json::json!(flipped);
+    let mut tampered = serde_json::to_vec_pretty(&value).unwrap();
+    tampered.push(b'\n');
+    std::fs::write(&changes_path, &tampered).unwrap();
+
+    init_cmd(&old, &new, repo)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("differs from the fresh diff"))
+        .stdout(predicate::str::is_empty());
+
+    let kept = std::fs::read(&changes_path).unwrap();
+    let document = sethu::vimanam::parse_diff_output(&kept).unwrap();
+    assert_eq!(
+        document.changes[0].severity,
+        if flipped == "breaking" {
+            sethu::vimanam::Severity::Breaking
+        } else {
+            sethu::vimanam::Severity::NonBreaking
+        }
+    );
+}
+
+#[test]
 fn list_shows_attempts_for_pair() {
     if !need_vimanam("list_shows_attempts_for_pair") {
         return;

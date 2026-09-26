@@ -114,9 +114,10 @@ fn push_framed(framed: &mut String, part: &str) {
 ///
 /// Reuse needs the pair, generator version, and invocation to match, as
 /// proven by the id, plus a stored change list that parses and carries
-/// the same change ids in the same order. Anything else fails loudly.
-/// This function never rewrites a stored record. The change list lands
-/// before the record, so a stored record always implies a complete list.
+/// the same change ids and severities in the same order. Anything else
+/// fails loudly. This function never rewrites a stored record. The change
+/// list lands before the record, so a stored record always implies a
+/// complete list.
 pub fn find_or_create_capture(
     pair_dir: &Path,
     fresh: &NewCapture<'_>,
@@ -168,7 +169,8 @@ pub fn find_or_create_capture(
 /// Check a stored change list against a fresh diff.
 ///
 /// The stored bytes must parse with the same generator version and the
-/// same change ids in the same order. Records stay exactly as reported.
+/// same change ids and severities in the same order. Records stay exactly
+/// as reported.
 fn check_reused_changes(
     kept: &[u8],
     fresh: &DiffDocument,
@@ -181,13 +183,21 @@ fn check_reused_changes(
             stored.generator.version
         );
     }
-    let kept_ids: Vec<&str> = stored.changes.iter().map(|item| item.id.as_str()).collect();
-    let fresh_ids: Vec<&str> = fresh.changes.iter().map(|item| item.id.as_str()).collect();
-    if kept_ids != fresh_ids {
+    let kept_pairs: Vec<(&str, &crate::vimanam::Severity)> = stored
+        .changes
+        .iter()
+        .map(|item| (item.id.as_str(), &item.severity))
+        .collect();
+    let fresh_pairs: Vec<(&str, &crate::vimanam::Severity)> = fresh
+        .changes
+        .iter()
+        .map(|item| (item.id.as_str(), &item.severity))
+        .collect();
+    if kept_pairs != fresh_pairs {
         anyhow::bail!(
-            "stored change list holds {} changes, the fresh diff holds {}",
-            kept_ids.len(),
-            fresh_ids.len()
+            "stored change list differs from the fresh diff ({} stored changes, {} fresh changes)",
+            kept_pairs.len(),
+            fresh_pairs.len()
         );
     }
     Ok(())
