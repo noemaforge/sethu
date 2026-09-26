@@ -1,8 +1,9 @@
 //! Entry point for the sethu binary.
 //!
-//! Parsing and dispatch live in the library. This wrapper forwards the
-//! exit code that dispatch returns. Usage errors exit with code 2 and
-//! every other failure exits with code 1.
+//! The binary parses the command line and calls the single library
+//! dispatch. This wrapper forwards the exit code that dispatch returns.
+//! Usage errors exit with code 2 and every other failure exits with
+//! code 1.
 
 use std::process::ExitCode;
 
@@ -15,7 +16,7 @@ fn main() -> ExitCode {
         .init();
 
     let cli = Cli::parse();
-    match cli.dispatch() {
+    match sethu::dispatch(&cli) {
         Ok(code) => code,
         Err(err) => {
             eprintln!("error: {err:#}");

@@ -721,3 +721,187 @@ fn several_attempts_exit_1() {
         .code(1)
         .stderr(predicate::str::contains("needs exactly one"));
 }
+
+/// Build a `sethu --attempt <selector> check` invocation in one repository.
+fn attempt_check_cmd(repo: &Path, selector: &str, args: &[&str]) -> Command {
+    let mut cmd = Command::cargo_bin("sethu").unwrap();
+    cmd.current_dir(repo)
+        .arg("--attempt")
+        .arg(selector)
+        .arg("check")
+        .args(args);
+    cmd
+}
+
+/// Build a `sethu --attempt <selector> record` invocation in one repository.
+fn attempt_record_cmd(repo: &Path, selector: &str, args: &[&str]) -> Command {
+    let mut cmd = Command::cargo_bin("sethu").unwrap();
+    cmd.current_dir(repo)
+        .arg("--attempt")
+        .arg(selector)
+        .arg("record")
+        .args(args);
+    cmd
+}
+
+/// State root with bare migration directories and no manifests.
+///
+/// Resolution fails before any manifest read, so these directories pin
+/// the unknown and ambiguous refusal paths without running init.
+fn bare_migrations(names: &[&str]) -> tempfile::TempDir {
+    let repo = tempfile::tempdir().unwrap();
+    let root = layout::state_root(repo.path());
+    for name in names {
+        std::fs::create_dir_all(layout::migration_dir(&root, name)).unwrap();
+    }
+    repo
+}
+
+/// Initialise a second attempt over the same pair and list every migration.
+fn setup_two(setup: &Setup) -> Vec<PathBuf> {
+    let old = fixture("immich/old.json");
+    let new = fixture("immich/new.json");
+    let mut second = Command::cargo_bin("sethu").unwrap();
+    second
+        .current_dir(&setup.repo)
+        .arg("init")
+        .arg(&old)
+        .arg(&new)
+        .arg("--repo")
+        .arg(&setup.repo)
+        .arg("--scope")
+        .arg("src");
+    second.assert().success();
+    let mut migrations: Vec<PathBuf> =
+        std::fs::read_dir(layout::migrations_dir(&layout::state_root(&setup.repo)))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+    migrations.sort();
+    assert_eq!(migrations.len(), 2);
+    migrations
+}
+
+/// Shortest leading slice of `target` that no other name shares.
+fn unique_prefix(target: &str, others: &[String]) -> String {
+    for len in 1..=target.len() {
+        let prefix = &target[..len];
+        if others.iter().all(|name| !name.starts_with(prefix)) {
+            return prefix.to_string();
+        }
+    }
+    target.to_string()
+}
+
+/// Fill a complete ledger with one pending decision through one selector.
+///
+/// The first change records a pending decision with a note. Every other
+/// change records scoped absence backed by the same trace file. Only the
+/// selected migration gains a ledger.
+fn fill_complete_ledger_with_attempt(setup: &Setup, selector: &str, trace: &str) {
+    let first = setup.ids[0].clone();
+    attempt_record_cmd(
+        &setup.repo,
+        selector,
+        &[
+            &first,
+            "--outcome",
+            "decision_required",
+            "--evidence",
+            trace,
+            "--note",
+            "Paging no longer applies, drop it or fetch repeated batches",
+        ],
+    )
+    .assert()
+    .success();
+    for id in setup.ids.iter().skip(1) {
+        let id = id.clone();
+        attempt_record_cmd(
+            &setup.repo,
+            selector,
+            &[&id, "--outcome", "no_usage_found", "--evidence", trace],
+        )
+        .assert()
+        .success();
+    }
+}
+
+#[test]
+fn attempt_prefix_evaluates_the_named_migration() {
+    if !need_vimanam("attempt_prefix_evaluates_the_named_migration") {
+        return;
+    }
+    let setup = setup();
+    let migrations = setup_two(&setup);
+    let target = setup
+        .migration
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let others: Vec<String> = migrations
+        .iter()
+        .filter(|path| *path != &setup.migration)
+        .map(|path| path.file_name().unwrap().to_str().unwrap().to_string())
+        .collect();
+    assert_eq!(others.len(), 1);
+    let prefix = unique_prefix(&target, &others);
+    let other_prefix = unique_prefix(&others[0], std::slice::from_ref(&target));
+
+    let trace = write_repo_file(&setup, "trace-notes.md", "searched wrappers\n");
+    fill_complete_ledger_with_attempt(&setup, &prefix, &trace);
+
+    attempt_check_cmd(&setup.repo, &prefix, &[])
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("accounted: yes"))
+        .stdout(predicate::str::contains("ready: no"));
+
+    attempt_check_cmd(&setup.repo, &other_prefix, &[])
+        .assert()
+        .failure()
+        .code(4)
+        .stdout(predicate::str::contains("accounted: no"));
+}
+
+#[test]
+fn attempt_unknown_value_names_the_value() {
+    let repo = bare_migrations(&["aa111111", "aa222222"]);
+
+    attempt_check_cmd(repo.path(), "deadbeef", &[])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("unknown attempt"))
+        .stderr(predicate::str::contains("deadbeef"))
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn attempt_ambiguous_prefix_names_the_candidates() {
+    let repo = bare_migrations(&["aa111111", "aa222222"]);
+
+    attempt_check_cmd(repo.path(), "aa", &[])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("ambiguous"))
+        .stderr(predicate::str::contains("aa111111"))
+        .stderr(predicate::str::contains("aa222222"))
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn attempt_empty_value_is_a_usage_error() {
+    let repo = bare_migrations(&["aa111111"]);
+
+    attempt_check_cmd(repo.path(), "", &[])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("non-empty"))
+        .stdout(predicate::str::is_empty());
+}

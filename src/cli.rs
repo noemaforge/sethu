@@ -4,9 +4,6 @@
 //! Each subcommand dispatches to its own module in `commands/`.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use std::process::ExitCode;
-
-use crate::commands;
 
 /// Trace OpenAPI changes into your application, repair them, and prove it.
 #[derive(Debug, Parser)]
@@ -85,46 +82,6 @@ impl std::fmt::Display for UsageError {
 }
 
 impl std::error::Error for UsageError {}
-
-impl Cli {
-    /// Run the parsed command line.
-    ///
-    /// Every arm calls the same command entry point as the library
-    /// runner. The `record` arm first resolves the global attempt
-    /// selector into one migration. Other arms keep ignoring the
-    /// selector until their own handling changes. A bad selector fails
-    /// before the command runs.
-    pub fn dispatch(&self) -> anyhow::Result<ExitCode> {
-        match &self.command {
-            Command::Install(args) => commands::install::run(args),
-            Command::Init(args) => commands::init::run(args),
-            Command::Changes(args) => commands::changes::run(args),
-            Command::Context(args) => commands::context::run(args),
-            Command::Record(args) => self.dispatch_record(args),
-            Command::Check(args) => commands::check::run(args),
-            Command::Stub(args) => commands::stub::run(args),
-            Command::Verify(args) => commands::verify::run(args),
-            Command::Report(args) => commands::report::run(args),
-            Command::Scan(args) => commands::scan::run(args),
-            Command::Capabilities(args) => commands::capabilities::run(args),
-        }
-    }
-
-    /// Resolve the attempt selector, then record into that migration.
-    ///
-    /// Without a selector this keeps the single migration fallback with
-    /// its current errors. A selector resolves by id or unique prefix
-    /// before anything runs or writes.
-    fn dispatch_record(&self, args: &RecordArgs) -> anyhow::Result<ExitCode> {
-        let Some(wanted) = self.attempt.as_deref() else {
-            return commands::record::run(args);
-        };
-        let repo = commands::record::working_repo()?;
-        let root = crate::state::layout::state_root(&repo);
-        let migration = commands::record::resolve_migration(&root, Some(wanted))?;
-        commands::record::run_on(&repo, &migration, args)
-    }
-}
 
 /// Arguments for `sethu install`.
 #[derive(Debug, clap::Args)]

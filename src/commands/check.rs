@@ -27,18 +27,23 @@ pub const STATUS: Status = Status::Available;
 /// the readiness flag. Damaged state outside the ledger fails as a tool
 /// error. The command writes nothing.
 pub fn run(args: &CheckArgs) -> anyhow::Result<ExitCode> {
-    let repo = std::env::current_dir().with_context(|| "read working directory for `check`")?;
-    let repo = repo
-        .canonicalize()
-        .with_context(|| format!("resolve working directory {}", repo.display()))?;
+    let repo = working_repo()?;
     let root = layout::state_root(&repo);
-
     let migration = sole_migration(&root)?;
-    let manifest: AttemptRecord =
-        crate::state::read_state_file(&layout::manifest_path(&migration))?;
+    run_on(&repo, &migration, args)
+}
+
+/// Check one migration that dispatch already resolved.
+///
+/// Accounting, readiness handling, and reporting behave exactly as the
+/// plain entry point. Only the lookup differs. Dispatch calls this after
+/// it turns the attempt selector into one migration directory.
+pub fn run_on(repo: &Path, migration: &Path, args: &CheckArgs) -> anyhow::Result<ExitCode> {
+    let root = layout::state_root(repo);
+    let manifest: AttemptRecord = crate::state::read_state_file(&layout::manifest_path(migration))?;
     manifest.validate()?;
 
-    let loaded = load_attempt_state(&root, &migration, &manifest)?;
+    let loaded = load_attempt_state(&root, migration, &manifest)?;
     let origins = load_origins(&loaded.capture_dir)?;
     let report = evaluate(&Inputs {
         manifest: &manifest,
@@ -46,7 +51,7 @@ pub fn run(args: &CheckArgs) -> anyhow::Result<ExitCode> {
         origins: origins.as_ref(),
         document: &loaded.document,
         ledger_bytes: loaded.ledger_bytes.as_deref(),
-        repo: &repo,
+        repo,
     });
 
     if args.json {
@@ -63,6 +68,16 @@ pub fn run(args: &CheckArgs) -> anyhow::Result<ExitCode> {
         report.ready,
         args.require_ready,
     ))
+}
+
+/// Resolve the working repository from the current directory.
+///
+/// The path is canonicalised, so later lookups compare one spelling.
+/// Failures name the directory that could not be read or resolved.
+pub fn working_repo() -> anyhow::Result<PathBuf> {
+    let repo = std::env::current_dir().with_context(|| "read working directory for `check`")?;
+    repo.canonicalize()
+        .with_context(|| format!("resolve working directory {}", repo.display()))
 }
 
 /// Loaded capture state for one attempt.

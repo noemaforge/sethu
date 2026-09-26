@@ -1,7 +1,7 @@
 //! Shared library for the sethu binary and its integration tests.
 //!
-//! The binary entry point calls [`run`]. Integration tests import the
-//! modules declared here directly.
+//! The binary entry point parses the command line and calls [`dispatch`].
+//! Integration tests import the modules declared here directly.
 
 /// Accounting and readiness for one migration attempt.
 pub mod check;
@@ -24,45 +24,59 @@ pub mod vimanam;
 
 use std::process::ExitCode;
 
-use clap::Parser;
-
 use cli::{Cli, Command};
 
-/// Parse the command line and run the chosen subcommand.
+/// Run the parsed command line and return its exit code.
 ///
-/// Logging goes to stderr. A command failure prints its message to stderr
-/// and yields exit code 1. Usage errors keep the codes that the argument
-/// parser assigns.
-pub fn run() -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
-        .target(env_logger::Target::Stderr)
-        .init();
-
-    let cli = Cli::parse();
-
-    let result = dispatch(&cli);
-
-    match result {
-        Ok(code) => code,
-        Err(err) => {
-            eprintln!("error: {err:#}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-fn dispatch(cli: &Cli) -> anyhow::Result<ExitCode> {
+/// Every arm calls the same command entry point. The `record` and `check`
+/// arms first resolve the global attempt selector into one migration
+/// through the shared lookup. Other arms keep ignoring the selector until
+/// their own handling changes. A bad selector fails before the command
+/// runs. Without a selector each command keeps its single migration
+/// fallback with its current errors.
+pub fn dispatch(cli: &Cli) -> anyhow::Result<ExitCode> {
     match &cli.command {
         Command::Install(args) => commands::install::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::Changes(args) => commands::changes::run(args),
         Command::Context(args) => commands::context::run(args),
-        Command::Record(args) => commands::record::run(args),
-        Command::Check(args) => commands::check::run(args),
+        Command::Record(args) => record_selected(cli, args),
+        Command::Check(args) => check_selected(cli, args),
         Command::Stub(args) => commands::stub::run(args),
         Command::Verify(args) => commands::verify::run(args),
         Command::Report(args) => commands::report::run(args),
         Command::Scan(args) => commands::scan::run(args),
         Command::Capabilities(args) => commands::capabilities::run(args),
     }
+}
+
+/// Resolve the attempt selector, then record into that migration.
+///
+/// Without a selector this keeps the single migration fallback with its
+/// current errors. A selector resolves by id or unique prefix before
+/// anything runs or writes.
+fn record_selected(cli: &Cli, args: &cli::RecordArgs) -> anyhow::Result<ExitCode> {
+    let Some(wanted) = cli.attempt.as_deref() else {
+        return commands::record::run(args);
+    };
+    let repo = commands::record::working_repo()?;
+    let root = crate::state::layout::state_root(&repo);
+    let migration = commands::record::resolve_migration(&root, Some(wanted))?;
+    commands::record::run_on(&repo, &migration, args)
+}
+
+/// Resolve the attempt selector, then check that migration.
+///
+/// Without a selector this keeps the single migration fallback with its
+/// current errors. A selector resolves by id or unique prefix through the
+/// same lookup that recording uses, so unknown and ambiguous values fail
+/// the same way before anything runs.
+fn check_selected(cli: &Cli, args: &cli::CheckArgs) -> anyhow::Result<ExitCode> {
+    let Some(wanted) = cli.attempt.as_deref() else {
+        return commands::check::run(args);
+    };
+    let repo = commands::check::working_repo()?;
+    let root = crate::state::layout::state_root(&repo);
+    let migration = commands::record::resolve_migration(&root, Some(wanted))?;
+    commands::check::run_on(&repo, &migration, args)
 }
