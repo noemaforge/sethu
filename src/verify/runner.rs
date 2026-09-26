@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use crate::cli::{SpecVersion, VerifyArgs};
 use crate::stub::server::StubServer;
 use crate::verify::manifest::{
-    CheckSpec, Manifest, Role, freeze_harness, hash_harness, load_manifest, read_freeze,
-    select_checks,
+    CheckSpec, ExpectedDiagnostic, ExpectedExchange, Manifest, Role, freeze_harness, hash_harness,
+    load_manifest, read_freeze, select_checks,
 };
 use crate::verify::outcome::{
     CaseResult, ParserKind, StageVerdict, TestRun, evaluate, looks_like_build_failure, parse_junit,
@@ -64,6 +64,18 @@ struct CheckSummary {
     name: String,
     /// Check role from the manifest.
     role: String,
+    /// Contract change records the check covered when the run started.
+    ///
+    /// The live manifest can change later, so the run keeps its own
+    /// copy. Readers map a past run back to its records from here.
+    #[serde(default)]
+    change_ids: Vec<String>,
+    /// Failure signature the red stage required.
+    #[serde(default)]
+    expected_diagnostic: Option<ExpectedDiagnostic>,
+    /// Stub exchanges every stage of this check had to show.
+    #[serde(default)]
+    expected_exchange: Vec<ExpectedExchange>,
     /// Whether the three stages met the check matrix.
     verified: bool,
     /// Per-stage verdict words in stage order.
@@ -114,6 +126,18 @@ struct StageRecord {
     stage: String,
     /// Check name from the manifest.
     check: String,
+    /// Contract change records the check covered when the run started.
+    ///
+    /// The live manifest can change later, so each stage keeps its
+    /// own copy beside the verdict that rested on it.
+    #[serde(default)]
+    change_ids: Vec<String>,
+    /// Failure signature this stage required, when one applied.
+    #[serde(default)]
+    expected_diagnostic: Option<ExpectedDiagnostic>,
+    /// Stub exchanges this stage had to show.
+    #[serde(default)]
+    expected_exchange: Vec<ExpectedExchange>,
     /// Application commit checked out for this stage.
     commit: String,
     /// Contract version served by this stage stub.
@@ -260,15 +284,7 @@ pub fn run(args: &VerifyArgs, manifest_arg: Option<&Path>) -> anyhow::Result<Exi
         if !verified {
             overall = false;
         }
-        summaries.push(CheckSummary {
-            name: check.name.clone(),
-            role: match check.role {
-                Role::Regression => "regression".to_string(),
-                Role::Guard => "guard".to_string(),
-            },
-            verified,
-            stages: words,
-        });
+        summaries.push(summarize_check(check, verified, words));
     }
     let record = RunRecord {
         run_id: run_id.clone(),
@@ -300,6 +316,25 @@ pub fn run(args: &VerifyArgs, manifest_arg: Option<&Path>) -> anyhow::Result<Exi
         Ok(ExitCode::from(EXIT_VERIFIED))
     } else {
         Ok(ExitCode::from(EXIT_NOT_VERIFIED))
+    }
+}
+
+/// Snapshot one check into its run summary.
+///
+/// The summary copies the mapping the verdict rested on, so a later
+/// manifest edit cannot reattribute this run.
+fn summarize_check(check: &CheckSpec, verified: bool, stages: Vec<String>) -> CheckSummary {
+    CheckSummary {
+        name: check.name.clone(),
+        role: match check.role {
+            Role::Regression => "regression".to_string(),
+            Role::Guard => "guard".to_string(),
+        },
+        change_ids: check.change_ids.clone(),
+        expected_diagnostic: check.expected_diagnostic.clone(),
+        expected_exchange: check.expected_exchange.clone(),
+        verified,
+        stages,
     }
 }
 
@@ -588,6 +623,9 @@ fn write_stage_record(
     let record = StageRecord {
         stage: stage.name.to_string(),
         check: check.name.clone(),
+        change_ids: check.change_ids.clone(),
+        expected_diagnostic: check.expected_diagnostic.clone(),
+        expected_exchange: check.expected_exchange.clone(),
         commit: stage.commit.clone(),
         spec_version: match stage.spec {
             SpecVersion::Old => "old".to_string(),
@@ -1291,6 +1329,108 @@ mod tests {
         assert!(changed_paths("").is_empty());
         assert!(is_state_path(&".sethu/runs/x"));
         assert!(!is_state_path(&"src/lib.rs"));
+    }
+
+    #[test]
+    fn summarized_check_keeps_mapping_after_manifest_edit() {
+        let mut check = CheckSpec {
+            name: "random-picker".to_string(),
+            role: Role::Regression,
+            change_ids: vec!["vc1_real".to_string()],
+            test: "verify_random_picker".to_string(),
+            expected_diagnostic: Some(crate::verify::manifest::ExpectedDiagnostic::Substring(
+                "random picker ids".to_string(),
+            )),
+            expected_exchange: vec![crate::verify::manifest::ExpectedExchange {
+                scenario: "random-search".to_string(),
+                method: "POST".to_string(),
+                path: "/search/random".to_string(),
+            }],
+        };
+        let summary = summarize_check(&check, true, vec!["expected-red".to_string()]);
+        check.change_ids = vec!["vc1_FABRICATED".to_string()];
+        check.expected_exchange.clear();
+        assert_eq!(summary.change_ids, vec!["vc1_real".to_string()]);
+        assert_eq!(summary.expected_exchange.len(), 1);
+        let value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(value["change_ids"], serde_json::json!(["vc1_real"]));
+        let back: CheckSummary = serde_json::from_value(value).unwrap();
+        assert_eq!(back.change_ids, vec!["vc1_real".to_string()]);
+        assert!(back.expected_diagnostic.is_some());
+        assert_eq!(back.expected_exchange.len(), 1);
+    }
+
+    #[test]
+    fn stage_record_keeps_mapping_after_manifest_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage_dir = dir.path().join("original-new");
+        std::fs::create_dir_all(&stage_dir).unwrap();
+        let manifest = Manifest {
+            schema_version: 1,
+            repo: dir.path().to_path_buf(),
+            baseline_commit: "base".to_string(),
+            patched_commit: "patched".to_string(),
+            harness: dir.path().join("missing-harness"),
+            scenarios_old: dir.path().to_path_buf(),
+            scenarios_new: dir.path().to_path_buf(),
+            spec_old_sha256: "0".repeat(64),
+            spec_new_sha256: "1".repeat(64),
+            checks: vec![],
+        };
+        let mut check = CheckSpec {
+            name: "random-picker".to_string(),
+            role: Role::Regression,
+            change_ids: vec!["vc1_real".to_string()],
+            test: "verify_random_picker".to_string(),
+            expected_diagnostic: Some(crate::verify::manifest::ExpectedDiagnostic::Substring(
+                "random picker ids".to_string(),
+            )),
+            expected_exchange: vec![crate::verify::manifest::ExpectedExchange {
+                scenario: "random-search".to_string(),
+                method: "POST".to_string(),
+                path: "/search/random".to_string(),
+            }],
+        };
+        let stage = StageDef {
+            name: "original-new",
+            commit: "base".to_string(),
+            spec: SpecVersion::New,
+            scenarios: dir.path().to_path_buf(),
+            want_red: true,
+        };
+        let run = TestRun {
+            command: "cargo nextest run".to_string(),
+            parser: ParserKind::NextestJunit,
+            exit_code: Some(0),
+            signal: None,
+            timed_out: false,
+            build_failed: false,
+            cases: Vec::new(),
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        let sha = "a".repeat(64);
+        write_stage_record(
+            &manifest,
+            &check,
+            &stage,
+            &stage_dir,
+            &sha,
+            &[],
+            0,
+            &run,
+            &[],
+            StageVerdict::Pass,
+        )
+        .unwrap();
+        check.change_ids = vec!["vc1_FABRICATED".to_string()];
+        check.expected_exchange.clear();
+        let bytes = std::fs::read(stage_dir.join("stage.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["change_ids"], serde_json::json!(["vc1_real"]));
+        assert_eq!(value["expected_exchange"].as_array().unwrap().len(), 1);
+        let back: StageRecord = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.change_ids, vec!["vc1_real".to_string()]);
     }
 
     #[test]

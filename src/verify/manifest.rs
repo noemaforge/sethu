@@ -229,6 +229,16 @@ fn validate_manifest(path: &Path, manifest: &Manifest) -> anyhow::Result<()> {
                 }
             }
         }
+        if let Some(ExpectedDiagnostic::Pattern { regex }) = &check.expected_diagnostic
+            && let Err(error) = regex::Regex::new(regex)
+        {
+            anyhow::bail!(
+                "manifest {} gives check {:?} a broken regex diagnostic {:?}: {error}",
+                path.display(),
+                check.name,
+                regex
+            );
+        }
         if check.expected_exchange.is_empty() {
             anyhow::bail!(
                 "manifest {} gives check {:?} no expected exchange",
@@ -492,6 +502,35 @@ mod tests {
         value["checks"][1]["expected_diagnostic"] = serde_json::json!("ids");
         let path = write_manifest(dir.path(), &value);
         assert!(load_manifest(&path).is_err());
+    }
+
+    #[test]
+    fn broken_regex_diagnostic_is_refused_at_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut value = valid_value();
+        value["checks"][0]["expected_diagnostic"] = serde_json::json!({"regex": "[unclosed"});
+        let path = write_manifest(dir.path(), &value);
+        let error = load_manifest(&path).unwrap_err();
+        let text = format!("{error:#}");
+        assert!(
+            text.contains("[unclosed"),
+            "error names the pattern: {text}"
+        );
+        assert!(
+            text.contains("random-picker"),
+            "error names the check: {text}"
+        );
+    }
+
+    #[test]
+    fn valid_regex_diagnostic_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut value = valid_value();
+        value["checks"][0]["expected_diagnostic"] =
+            serde_json::json!({"regex": "random picker ids: .*"});
+        let path = write_manifest(dir.path(), &value);
+        let (manifest, _) = load_manifest(&path).unwrap();
+        assert!(manifest.checks[0].expected_diagnostic.is_some());
     }
 
     #[test]
