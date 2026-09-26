@@ -5,7 +5,10 @@
 //! store bytes through atomic writes, so files land whole or not at all.
 
 pub mod atomic;
+pub mod attempt;
+pub mod capture;
 pub mod layout;
+pub mod pair;
 
 use std::path::Path;
 
