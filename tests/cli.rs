@@ -93,14 +93,34 @@ fn install_stub_exits_1_with_not_available() {
 }
 
 #[test]
-fn init_stub_exits_1_with_not_available() {
+fn init_list_reports_no_attempts_with_success() {
+    let specs = tempfile::tempdir().unwrap();
+    let old = specs.path().join("old.json");
+    let new = specs.path().join("new.json");
+    std::fs::write(
+        &old,
+        r#"{"openapi":"3.0.0","info":{"title":"Demo","version":"1"},"paths":{}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &new,
+        r#"{"openapi":"3.0.0","info":{"title":"Demo","version":"2"},"paths":{}}"#,
+    )
+    .unwrap();
+    let repo = tempfile::tempdir().unwrap();
+
     sethu()
-        .args(["init", "old.yaml", "new.yaml"])
+        .arg("init")
+        .arg(&old)
+        .arg(&new)
+        .arg("--list")
+        .arg("--repo")
+        .arg(repo.path())
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("no attempts"));
+    assert!(!repo.path().join(".sethu").exists());
 }
 
 #[test]
@@ -192,14 +212,14 @@ fn scan_stub_exits_1_with_not_available() {
 }
 
 #[test]
-fn capabilities_stub_exits_1_with_not_available() {
+fn capabilities_reports_table_with_success() {
     sethu()
         .arg("capabilities")
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"))
-        .stdout(predicate::str::is_empty());
+        .success()
+        .stdout(predicate::str::contains("vimanam"))
+        .stdout(predicate::str::contains("git"))
+        .stdout(predicate::str::contains("init: available"));
 }
 
 #[test]
