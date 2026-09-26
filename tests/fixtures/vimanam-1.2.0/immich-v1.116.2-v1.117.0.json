@@ -1,0 +1,3198 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "vimanam",
+    "version": "1.2.0"
+  },
+  "old": {
+    "title": "Immich",
+    "version": "1.116.2",
+    "file_sha256": "ff2d4e2a7c35cbcf0ef0b8ca50158bf7711bc200a80f4cdcf0a51208403631c5"
+  },
+  "new": {
+    "title": "Immich",
+    "version": "1.117.0",
+    "file_sha256": "a5c98c5cf35f9b42a412a3aaee7c1e1f597279cc7c8a88cc090d7a7e21aedd26"
+  },
+  "summary": {
+    "endpoints_added": 1,
+    "endpoints_removed": 0,
+    "endpoints_changed": 5,
+    "breaking": 26,
+    "non_breaking": 19,
+    "review": 1
+  },
+  "changes": [
+    {
+      "id": "vc1_adf77fb9626b8c5e3e6609c566803a17c458750ef11e5e35eb4d82b2dd3187e9",
+      "endpoint": {
+        "method": "POST",
+        "path": "/search/random"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/page",
+          "target": "property",
+          "member": "page",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_4e74444728ca138b50db2a126669244f7da46c24d748fa4e59fd9f32f21ca6ff",
+      "endpoint": {
+        "method": "POST",
+        "path": "/search/random"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/albums",
+          "target": "property",
+          "member": "albums",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "properties": {
+                "count": {
+                  "type": "integer"
+                },
+                "facets": {
+                  "items": {
+                    "properties": {
+                      "counts": {
+                        "items": {
+                          "properties": {
+                            "count": {
+                              "type": "integer"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "count",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "fieldName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "counts",
+                      "fieldName"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "items": {
+                  "items": {
+                    "properties": {
+                      "albumName": {
+                        "type": "string"
+                      },
+                      "albumThumbnailAssetId": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "albumUsers": {
+                        "items": {
+                          "properties": {
+                            "role": {
+                              "enum": [
+                                "editor",
+                                "viewer"
+                              ],
+                              "type": "string"
+                            },
+                            "user": {
+                              "properties": {
+                                "avatarColor": {
+                                  "enum": [
+                                    "amber",
+                                    "blue",
+                                    "gray",
+                                    "green",
+                                    "orange",
+                                    "pink",
+                                    "primary",
+                                    "purple",
+                                    "red",
+                                    "yellow"
+                                  ],
+                                  "type": "string"
+                                },
+                                "email": {
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "profileChangedAt": {
+                                  "format": "date-time",
+                                  "type": "string"
+                                },
+                                "profileImagePath": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "avatarColor",
+                                "email",
+                                "id",
+                                "name",
+                                "profileChangedAt",
+                                "profileImagePath"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "role",
+                            "user"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "assetCount": {
+                        "type": "integer"
+                      },
+                      "assets": {
+                        "items": {
+                          "properties": {
+                            "checksum": {
+                              "type": "string"
+                            },
+                            "deviceAssetId": {
+                              "type": "string"
+                            },
+                            "deviceId": {
+                              "type": "string"
+                            },
+                            "duplicateId": {
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "duration": {
+                              "type": "string"
+                            },
+                            "exifInfo": {
+                              "properties": {
+                                "city": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "country": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "dateTimeOriginal": {
+                                  "default": null,
+                                  "format": "date-time",
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "exifImageHeight": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "exifImageWidth": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "exposureTime": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "fNumber": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "fileSizeInByte": {
+                                  "default": null,
+                                  "format": "int64",
+                                  "nullable": true,
+                                  "type": "integer"
+                                },
+                                "focalLength": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "iso": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "latitude": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "lensModel": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "longitude": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "make": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "model": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "modifyDate": {
+                                  "default": null,
+                                  "format": "date-time",
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "orientation": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "projectionType": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "rating": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "number"
+                                },
+                                "state": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                },
+                                "timeZone": {
+                                  "default": null,
+                                  "nullable": true,
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "fileCreatedAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "fileModifiedAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "hasMetadata": {
+                              "type": "boolean"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "isArchived": {
+                              "type": "boolean"
+                            },
+                            "isFavorite": {
+                              "type": "boolean"
+                            },
+                            "isOffline": {
+                              "type": "boolean"
+                            },
+                            "isTrashed": {
+                              "type": "boolean"
+                            },
+                            "libraryId": {
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "livePhotoVideoId": {
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "localDateTime": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "originalFileName": {
+                              "type": "string"
+                            },
+                            "originalMimeType": {
+                              "type": "string"
+                            },
+                            "originalPath": {
+                              "type": "string"
+                            },
+                            "owner": {
+                              "properties": {
+                                "avatarColor": {
+                                  "enum": [
+                                    "amber",
+                                    "blue",
+                                    "gray",
+                                    "green",
+                                    "orange",
+                                    "pink",
+                                    "primary",
+                                    "purple",
+                                    "red",
+                                    "yellow"
+                                  ],
+                                  "type": "string"
+                                },
+                                "email": {
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "profileChangedAt": {
+                                  "format": "date-time",
+                                  "type": "string"
+                                },
+                                "profileImagePath": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "avatarColor",
+                                "email",
+                                "id",
+                                "name",
+                                "profileChangedAt",
+                                "profileImagePath"
+                              ],
+                              "type": "object"
+                            },
+                            "ownerId": {
+                              "type": "string"
+                            },
+                            "people": {
+                              "items": {
+                                "properties": {
+                                  "birthDate": {
+                                    "format": "date",
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "faces": {
+                                    "items": {
+                                      "properties": {
+                                        "boundingBoxX1": {
+                                          "type": "integer"
+                                        },
+                                        "boundingBoxX2": {
+                                          "type": "integer"
+                                        },
+                                        "boundingBoxY1": {
+                                          "type": "integer"
+                                        },
+                                        "boundingBoxY2": {
+                                          "type": "integer"
+                                        },
+                                        "id": {
+                                          "format": "uuid",
+                                          "type": "string"
+                                        },
+                                        "imageHeight": {
+                                          "type": "integer"
+                                        },
+                                        "imageWidth": {
+                                          "type": "integer"
+                                        },
+                                        "sourceType": {
+                                          "enum": [
+                                            "exif",
+                                            "machine-learning"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "boundingBoxX1",
+                                        "boundingBoxX2",
+                                        "boundingBoxY1",
+                                        "boundingBoxY2",
+                                        "id",
+                                        "imageHeight",
+                                        "imageWidth"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "isHidden": {
+                                    "type": "boolean"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "thumbnailPath": {
+                                    "type": "string"
+                                  },
+                                  "updatedAt": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "birthDate",
+                                  "faces",
+                                  "id",
+                                  "isHidden",
+                                  "name",
+                                  "thumbnailPath"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "resized": {
+                              "type": "boolean"
+                            },
+                            "smartInfo": {
+                              "properties": {
+                                "objects": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "nullable": true,
+                                  "type": "array"
+                                },
+                                "tags": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "nullable": true,
+                                  "type": "array"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "stack": {
+                              "allOf": [
+                                {
+                                  "properties": {
+                                    "assetCount": {
+                                      "type": "integer"
+                                    },
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "primaryAssetId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "assetCount",
+                                    "id",
+                                    "primaryAssetId"
+                                  ],
+                                  "type": "object"
+                                }
+                              ],
+                              "nullable": true
+                            },
+                            "tags": {
+                              "items": {
+                                "properties": {
+                                  "color": {
+                                    "type": "string"
+                                  },
+                                  "createdAt": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "parentId": {
+                                    "type": "string"
+                                  },
+                                  "updatedAt": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "createdAt",
+                                  "id",
+                                  "name",
+                                  "updatedAt",
+                                  "value"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "thumbhash": {
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "type": {
+                              "enum": [
+                                "AUDIO",
+                                "IMAGE",
+                                "OTHER",
+                                "VIDEO"
+                              ],
+                              "type": "string"
+                            },
+                            "unassignedFaces": {
+                              "items": {
+                                "properties": {
+                                  "boundingBoxX1": {
+                                    "type": "integer"
+                                  },
+                                  "boundingBoxX2": {
+                                    "type": "integer"
+                                  },
+                                  "boundingBoxY1": {
+                                    "type": "integer"
+                                  },
+                                  "boundingBoxY2": {
+                                    "type": "integer"
+                                  },
+                                  "id": {
+                                    "format": "uuid",
+                                    "type": "string"
+                                  },
+                                  "imageHeight": {
+                                    "type": "integer"
+                                  },
+                                  "imageWidth": {
+                                    "type": "integer"
+                                  },
+                                  "sourceType": {
+                                    "enum": [
+                                      "exif",
+                                      "machine-learning"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "boundingBoxX1",
+                                  "boundingBoxX2",
+                                  "boundingBoxY1",
+                                  "boundingBoxY2",
+                                  "id",
+                                  "imageHeight",
+                                  "imageWidth"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "checksum",
+                            "deviceAssetId",
+                            "deviceId",
+                            "duration",
+                            "fileCreatedAt",
+                            "fileModifiedAt",
+                            "hasMetadata",
+                            "id",
+                            "isArchived",
+                            "isFavorite",
+                            "isOffline",
+                            "isTrashed",
+                            "localDateTime",
+                            "originalFileName",
+                            "originalPath",
+                            "ownerId",
+                            "thumbhash",
+                            "type",
+                            "updatedAt"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "createdAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "endDate": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "hasSharedLink": {
+                        "type": "boolean"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "isActivityEnabled": {
+                        "type": "boolean"
+                      },
+                      "lastModifiedAssetTimestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "order": {
+                        "enum": [
+                          "asc",
+                          "desc"
+                        ],
+                        "type": "string"
+                      },
+                      "owner": {
+                        "properties": {
+                          "avatarColor": {
+                            "enum": [
+                              "amber",
+                              "blue",
+                              "gray",
+                              "green",
+                              "orange",
+                              "pink",
+                              "primary",
+                              "purple",
+                              "red",
+                              "yellow"
+                            ],
+                            "type": "string"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "profileChangedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "profileImagePath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "avatarColor",
+                          "email",
+                          "id",
+                          "name",
+                          "profileChangedAt",
+                          "profileImagePath"
+                        ],
+                        "type": "object"
+                      },
+                      "ownerId": {
+                        "type": "string"
+                      },
+                      "shared": {
+                        "type": "boolean"
+                      },
+                      "startDate": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "albumName",
+                      "albumThumbnailAssetId",
+                      "albumUsers",
+                      "assetCount",
+                      "assets",
+                      "createdAt",
+                      "description",
+                      "hasSharedLink",
+                      "id",
+                      "isActivityEnabled",
+                      "owner",
+                      "ownerId",
+                      "shared",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "total": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "count",
+                "facets",
+                "items",
+                "total"
+              ],
+              "type": "object"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_2c4b2914f03e7a9c4097971b691b00b9ae6718db164a5fa9a0263bd48760cdc2",
+      "endpoint": {
+        "method": "POST",
+        "path": "/search/random"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/assets",
+          "target": "property",
+          "member": "assets",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "properties": {
+                "count": {
+                  "type": "integer"
+                },
+                "facets": {
+                  "items": {
+                    "properties": {
+                      "counts": {
+                        "items": {
+                          "properties": {
+                            "count": {
+                              "type": "integer"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "count",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "fieldName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "counts",
+                      "fieldName"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "items": {
+                  "items": {
+                    "properties": {
+                      "checksum": {
+                        "type": "string"
+                      },
+                      "deviceAssetId": {
+                        "type": "string"
+                      },
+                      "deviceId": {
+                        "type": "string"
+                      },
+                      "duplicateId": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "duration": {
+                        "type": "string"
+                      },
+                      "exifInfo": {
+                        "properties": {
+                          "city": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "country": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "dateTimeOriginal": {
+                            "default": null,
+                            "format": "date-time",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "description": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "exifImageHeight": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "exifImageWidth": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "exposureTime": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "fNumber": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "fileSizeInByte": {
+                            "default": null,
+                            "format": "int64",
+                            "nullable": true,
+                            "type": "integer"
+                          },
+                          "focalLength": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "iso": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "latitude": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "lensModel": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "longitude": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "make": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "model": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "modifyDate": {
+                            "default": null,
+                            "format": "date-time",
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "orientation": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "projectionType": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "rating": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "number"
+                          },
+                          "state": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "timeZone": {
+                            "default": null,
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "fileCreatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "fileModifiedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "hasMetadata": {
+                        "type": "boolean"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "isArchived": {
+                        "type": "boolean"
+                      },
+                      "isFavorite": {
+                        "type": "boolean"
+                      },
+                      "isOffline": {
+                        "type": "boolean"
+                      },
+                      "isTrashed": {
+                        "type": "boolean"
+                      },
+                      "libraryId": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "livePhotoVideoId": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "localDateTime": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "originalFileName": {
+                        "type": "string"
+                      },
+                      "originalMimeType": {
+                        "type": "string"
+                      },
+                      "originalPath": {
+                        "type": "string"
+                      },
+                      "owner": {
+                        "properties": {
+                          "avatarColor": {
+                            "enum": [
+                              "amber",
+                              "blue",
+                              "gray",
+                              "green",
+                              "orange",
+                              "pink",
+                              "primary",
+                              "purple",
+                              "red",
+                              "yellow"
+                            ],
+                            "type": "string"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "profileChangedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "profileImagePath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "avatarColor",
+                          "email",
+                          "id",
+                          "name",
+                          "profileChangedAt",
+                          "profileImagePath"
+                        ],
+                        "type": "object"
+                      },
+                      "ownerId": {
+                        "type": "string"
+                      },
+                      "people": {
+                        "items": {
+                          "properties": {
+                            "birthDate": {
+                              "format": "date",
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "faces": {
+                              "items": {
+                                "properties": {
+                                  "boundingBoxX1": {
+                                    "type": "integer"
+                                  },
+                                  "boundingBoxX2": {
+                                    "type": "integer"
+                                  },
+                                  "boundingBoxY1": {
+                                    "type": "integer"
+                                  },
+                                  "boundingBoxY2": {
+                                    "type": "integer"
+                                  },
+                                  "id": {
+                                    "format": "uuid",
+                                    "type": "string"
+                                  },
+                                  "imageHeight": {
+                                    "type": "integer"
+                                  },
+                                  "imageWidth": {
+                                    "type": "integer"
+                                  },
+                                  "sourceType": {
+                                    "enum": [
+                                      "exif",
+                                      "machine-learning"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "boundingBoxX1",
+                                  "boundingBoxX2",
+                                  "boundingBoxY1",
+                                  "boundingBoxY2",
+                                  "id",
+                                  "imageHeight",
+                                  "imageWidth"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "isHidden": {
+                              "type": "boolean"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "thumbnailPath": {
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "birthDate",
+                            "faces",
+                            "id",
+                            "isHidden",
+                            "name",
+                            "thumbnailPath"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "resized": {
+                        "type": "boolean"
+                      },
+                      "smartInfo": {
+                        "properties": {
+                          "objects": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "nullable": true,
+                            "type": "array"
+                          },
+                          "tags": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "nullable": true,
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "stack": {
+                        "allOf": [
+                          {
+                            "properties": {
+                              "assetCount": {
+                                "type": "integer"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "primaryAssetId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "assetCount",
+                              "id",
+                              "primaryAssetId"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "nullable": true
+                      },
+                      "tags": {
+                        "items": {
+                          "properties": {
+                            "color": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "parentId": {
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "createdAt",
+                            "id",
+                            "name",
+                            "updatedAt",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "thumbhash": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "type": {
+                        "enum": [
+                          "AUDIO",
+                          "IMAGE",
+                          "OTHER",
+                          "VIDEO"
+                        ],
+                        "type": "string"
+                      },
+                      "unassignedFaces": {
+                        "items": {
+                          "properties": {
+                            "boundingBoxX1": {
+                              "type": "integer"
+                            },
+                            "boundingBoxX2": {
+                              "type": "integer"
+                            },
+                            "boundingBoxY1": {
+                              "type": "integer"
+                            },
+                            "boundingBoxY2": {
+                              "type": "integer"
+                            },
+                            "id": {
+                              "format": "uuid",
+                              "type": "string"
+                            },
+                            "imageHeight": {
+                              "type": "integer"
+                            },
+                            "imageWidth": {
+                              "type": "integer"
+                            },
+                            "sourceType": {
+                              "enum": [
+                                "exif",
+                                "machine-learning"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "boundingBoxX1",
+                            "boundingBoxX2",
+                            "boundingBoxY1",
+                            "boundingBoxY2",
+                            "id",
+                            "imageHeight",
+                            "imageWidth"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "checksum",
+                      "deviceAssetId",
+                      "deviceId",
+                      "duration",
+                      "fileCreatedAt",
+                      "fileModifiedAt",
+                      "hasMetadata",
+                      "id",
+                      "isArchived",
+                      "isFavorite",
+                      "isOffline",
+                      "isTrashed",
+                      "localDateTime",
+                      "originalFileName",
+                      "originalPath",
+                      "ownerId",
+                      "thumbhash",
+                      "type",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "nextPage": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "total": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "count",
+                "facets",
+                "items",
+                "nextPage",
+                "total"
+              ],
+              "type": "object"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_37f8421e215976ed5feeed9478d83b7accb42deaa8316b161ffdf0c3d35dc545",
+      "endpoint": {
+        "method": "POST",
+        "path": "/search/random"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/type",
+          "target": "type",
+          "member": null,
+          "operation": "changed",
+          "before": {
+            "present": true,
+            "value": "object"
+          },
+          "after": {
+            "present": true,
+            "value": "array"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_73764c206007f30547943a5b9a4f47970c648d82fd665a6edfbce7d15ab8aaab",
+      "endpoint": {
+        "method": "POST",
+        "path": "/search/random"
+      },
+      "kind": "response_schema_changed",
+      "severity": "review",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/items",
+          "target": "other",
+          "member": null,
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "checksum": {
+                  "type": "string"
+                },
+                "deviceAssetId": {
+                  "type": "string"
+                },
+                "deviceId": {
+                  "type": "string"
+                },
+                "duplicateId": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "duration": {
+                  "type": "string"
+                },
+                "exifInfo": {
+                  "properties": {
+                    "city": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "country": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "dateTimeOriginal": {
+                      "default": null,
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "description": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "exifImageHeight": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "exifImageWidth": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "exposureTime": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "fNumber": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "fileSizeInByte": {
+                      "default": null,
+                      "format": "int64",
+                      "nullable": true,
+                      "type": "integer"
+                    },
+                    "focalLength": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "iso": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "latitude": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "lensModel": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "longitude": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "make": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "model": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "modifyDate": {
+                      "default": null,
+                      "format": "date-time",
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "orientation": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "projectionType": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "rating": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "number"
+                    },
+                    "state": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "timeZone": {
+                      "default": null,
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "fileCreatedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "fileModifiedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "hasMetadata": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "isArchived": {
+                  "type": "boolean"
+                },
+                "isFavorite": {
+                  "type": "boolean"
+                },
+                "isOffline": {
+                  "type": "boolean"
+                },
+                "isTrashed": {
+                  "type": "boolean"
+                },
+                "libraryId": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "livePhotoVideoId": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "localDateTime": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "originalFileName": {
+                  "type": "string"
+                },
+                "originalMimeType": {
+                  "type": "string"
+                },
+                "originalPath": {
+                  "type": "string"
+                },
+                "owner": {
+                  "properties": {
+                    "avatarColor": {
+                      "enum": [
+                        "amber",
+                        "blue",
+                        "gray",
+                        "green",
+                        "orange",
+                        "pink",
+                        "primary",
+                        "purple",
+                        "red",
+                        "yellow"
+                      ],
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "profileChangedAt": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "profileImagePath": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "avatarColor",
+                    "email",
+                    "id",
+                    "name",
+                    "profileChangedAt",
+                    "profileImagePath"
+                  ],
+                  "type": "object"
+                },
+                "ownerId": {
+                  "type": "string"
+                },
+                "people": {
+                  "items": {
+                    "properties": {
+                      "birthDate": {
+                        "format": "date",
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "faces": {
+                        "items": {
+                          "properties": {
+                            "boundingBoxX1": {
+                              "type": "integer"
+                            },
+                            "boundingBoxX2": {
+                              "type": "integer"
+                            },
+                            "boundingBoxY1": {
+                              "type": "integer"
+                            },
+                            "boundingBoxY2": {
+                              "type": "integer"
+                            },
+                            "id": {
+                              "format": "uuid",
+                              "type": "string"
+                            },
+                            "imageHeight": {
+                              "type": "integer"
+                            },
+                            "imageWidth": {
+                              "type": "integer"
+                            },
+                            "sourceType": {
+                              "enum": [
+                                "exif",
+                                "machine-learning"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "boundingBoxX1",
+                            "boundingBoxX2",
+                            "boundingBoxY1",
+                            "boundingBoxY2",
+                            "id",
+                            "imageHeight",
+                            "imageWidth"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "isHidden": {
+                        "type": "boolean"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "thumbnailPath": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "birthDate",
+                      "faces",
+                      "id",
+                      "isHidden",
+                      "name",
+                      "thumbnailPath"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "resized": {
+                  "type": "boolean"
+                },
+                "smartInfo": {
+                  "properties": {
+                    "objects": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true,
+                      "type": "array"
+                    },
+                    "tags": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "nullable": true,
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                },
+                "stack": {
+                  "allOf": [
+                    {
+                      "properties": {
+                        "assetCount": {
+                          "type": "integer"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "primaryAssetId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "assetCount",
+                        "id",
+                        "primaryAssetId"
+                      ],
+                      "type": "object"
+                    }
+                  ],
+                  "nullable": true
+                },
+                "tags": {
+                  "items": {
+                    "properties": {
+                      "color": {
+                        "type": "string"
+                      },
+                      "createdAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "parentId": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "createdAt",
+                      "id",
+                      "name",
+                      "updatedAt",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "thumbhash": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "AUDIO",
+                    "IMAGE",
+                    "OTHER",
+                    "VIDEO"
+                  ],
+                  "type": "string"
+                },
+                "unassignedFaces": {
+                  "items": {
+                    "properties": {
+                      "boundingBoxX1": {
+                        "type": "integer"
+                      },
+                      "boundingBoxX2": {
+                        "type": "integer"
+                      },
+                      "boundingBoxY1": {
+                        "type": "integer"
+                      },
+                      "boundingBoxY2": {
+                        "type": "integer"
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "imageHeight": {
+                        "type": "integer"
+                      },
+                      "imageWidth": {
+                        "type": "integer"
+                      },
+                      "sourceType": {
+                        "enum": [
+                          "exif",
+                          "machine-learning"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "boundingBoxX1",
+                      "boundingBoxX2",
+                      "boundingBoxY1",
+                      "boundingBoxY2",
+                      "id",
+                      "imageHeight",
+                      "imageWidth"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "updatedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "checksum",
+                "deviceAssetId",
+                "deviceId",
+                "duration",
+                "fileCreatedAt",
+                "fileModifiedAt",
+                "hasMetadata",
+                "id",
+                "isArchived",
+                "isFavorite",
+                "isOffline",
+                "isTrashed",
+                "localDateTime",
+                "originalFileName",
+                "originalPath",
+                "ownerId",
+                "thumbhash",
+                "type",
+                "updatedAt"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_d34f7fe6901e9f92c8c142f9036d5e0ffa9b12a81bd91f2d2f5f3851d44d1a42",
+      "endpoint": {
+        "method": "GET",
+        "path": "/server/about"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/thirdPartyBugFeatureUrl",
+          "target": "property",
+          "member": "thirdPartyBugFeatureUrl",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_469501e71e47ec6d6e4829dbb2efa97be56e43b6980e51deee767725e6623bb7",
+      "endpoint": {
+        "method": "GET",
+        "path": "/server/about"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/thirdPartyDocumentationUrl",
+          "target": "property",
+          "member": "thirdPartyDocumentationUrl",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_389466106780b99d0395c80155db2d9dfd88a842f86d3a88395bc11d49e59752",
+      "endpoint": {
+        "method": "GET",
+        "path": "/server/about"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/thirdPartySourceUrl",
+          "target": "property",
+          "member": "thirdPartySourceUrl",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_375838c439c12ef900ee729e2d2629faec4a9a9378204e7f44e537c965cfec08",
+      "endpoint": {
+        "method": "GET",
+        "path": "/server/about"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/thirdPartySupportUrl",
+          "target": "property",
+          "member": "thirdPartySupportUrl",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_fd108ab30018354902674e3aa04aa7ae21efb2b8c29f0c13f9d1670a955a404e",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewFormat",
+          "target": "property",
+          "member": "previewFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_6c863860b94b9cfa423bfa49c9a6a0f4f10e47bec55c0ac60be415492dbf9b84",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewSize",
+          "target": "property",
+          "member": "previewSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_62a120df52c7b9a8f836e8455cdfdb8cf6dac89c6e2c693f3130ca08443e1e80",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/quality",
+          "target": "property",
+          "member": "quality",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_5db08f5c6821c2f59f3e17234d8939be3e9f49f24b02398d3b3af72899d173be",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailFormat",
+          "target": "property",
+          "member": "thumbnailFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_6330ac485e56a327573ee7161d27503c19c09c75aee9831b341d3e5bd5e552b8",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailSize",
+          "target": "property",
+          "member": "thumbnailSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_252aa625fe219460210ef47cd497cc184682666e7807f0865ca39dfa4851f535",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/preview",
+          "target": "property",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_2b7b7405af67ae1f23c0c1d5639ddb6fab3bf2f5626f05b38bb3fd5207b114ff",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnail",
+          "target": "property",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_3ee4d889d050c4b070a68b9e69501ff4eecd55be690b71dc2abac5f2947a37c1",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/required/preview",
+          "target": "required_member",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "preview"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_5e85e7f93a60f82700a7d24b0176f4591958a52739d8198a6195b0cedc9cde59",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/required/thumbnail",
+          "target": "required_member",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "thumbnail"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_09033460566b2800280116add3a615b720a2fbe39a8f31937a455f368f8168e5",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewFormat",
+          "target": "property",
+          "member": "previewFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_1cec7d816b52666c6641966fc05e39783a89b457c476bd3513443faa1283e337",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewSize",
+          "target": "property",
+          "member": "previewSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_bb3719c86028c4c702975cbd96c0b3dbd38503e95eb53cdcf39b3bca16a6d6a3",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/properties/quality",
+          "target": "property",
+          "member": "quality",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_66d27de48540f112fb58bf164cf6a34f6aec422cf1aba2d73578e54b457f8e66",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailFormat",
+          "target": "property",
+          "member": "thumbnailFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_05e4817785622c1cc8d401f386cf19ba4a942255738776f428a62a445ad8ca0d",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailSize",
+          "target": "property",
+          "member": "thumbnailSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_f57b9b34b645e5f99c1117dd7820cf71c29630a8e86f26defbfb90de89842a6a",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/properties/preview",
+          "target": "property",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_a0ffd123ce0342e4b2be41a940474709a1e740a393f77ca08ecee4706d140f7e",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnail",
+          "target": "property",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_55abe222364881641fd5cf93c10bcbc142d7eced6f14b770b26802a52ea05698",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/required/preview",
+          "target": "required_member",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "preview"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_4e50c7f558a3b3f09911ba1fe570d87f46ee223c6dbda772ff7e3b4850913abd",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "request_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "schema_change": {
+          "pointer": "/properties/image/required/thumbnail",
+          "target": "required_member",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "thumbnail"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_4a9e8040677aa818dc1556d1b9cdabf2248762da22733cd9c19720828ec758ce",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewFormat",
+          "target": "property",
+          "member": "previewFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_d1eb94d29a596a5a907f5ada4642e23bf47c53176eac37f218ffd3bfa3d3f0a1",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewSize",
+          "target": "property",
+          "member": "previewSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_e08bcdf4f1f63f5df5d24351cb81701edc0a818cf82885855c9e69b01f458dac",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/quality",
+          "target": "property",
+          "member": "quality",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_ef29bfef8cde0fd72ebcc27a78678a236f56a5d6151b03960d62538a2f266506",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailFormat",
+          "target": "property",
+          "member": "thumbnailFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_84d46949451bb18dc92e23307390eda4b5e0bd3716654f45f6500b2ae0af4b61",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailSize",
+          "target": "property",
+          "member": "thumbnailSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_d44162fbe1b643cec1cd6a1522d8b20599dfe5a27bbc33a250756d07ea218ee0",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/preview",
+          "target": "property",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_bca6a85b471c853e719dedf0586aa01e60feb8e3f1add004661ba414bcd5384f",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnail",
+          "target": "property",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_d0e1b7c724f41fa6192173e3e587521a083ec9b6e6c22d627dbad2991ae561d9",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/required/preview",
+          "target": "required_member",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "preview"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_0d2b5628a0d13f6978b300eeed8f5ea871758ba845aba70497763f5cc84c1730",
+      "endpoint": {
+        "method": "PUT",
+        "path": "/system-config"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/required/thumbnail",
+          "target": "required_member",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "thumbnail"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_12737f2ad2a8011e6c8f95f6777cd197225402e2be383323bf35805c73f8aa96",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewFormat",
+          "target": "property",
+          "member": "previewFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_9887f5afcdc273aa46796c773324b673c5aea784fd455f9c59372a95d2af7b60",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/previewSize",
+          "target": "property",
+          "member": "previewSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_c434d2c42049029d59dd6ffad140c90a7ab1dacc78cab9e23f8f7e886cbf0980",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/quality",
+          "target": "property",
+          "member": "quality",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_f84d5dacaaae44657b338a12453a38d71ed322dabeb33dc807ee1c1d2c178df3",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailFormat",
+          "target": "property",
+          "member": "thumbnailFormat",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "enum": [
+                "jpeg",
+                "webp"
+              ],
+              "type": "string"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_ab64169a144f8432093c210a524304bd98eef8b8447b6f349ec60181a463dde5",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnailSize",
+          "target": "property",
+          "member": "thumbnailSize",
+          "operation": "removed",
+          "before": {
+            "present": true,
+            "value": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "after": {
+            "present": false
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_f0d2b2a17762122d86e5236cecb1ff37d5268fa422c967ab89d2798288a0e300",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/preview",
+          "target": "property",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_6c1221ab5d0609d95acc192b96d082bb90e26415ed76d6416d054a541e9bf29e",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/properties/thumbnail",
+          "target": "property",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": {
+              "properties": {
+                "format": {
+                  "enum": [
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                "quality": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "size": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "format",
+                "quality",
+                "size"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_1c97eab5d2feaf1967e58b46567fa40e3062517d4042fb168b09fca2a04933ab",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/required/preview",
+          "target": "required_member",
+          "member": "preview",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "preview"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_25e11314de01138cc78e8e68d731acea7532ddac3e8014d8d583bd05fc738e87",
+      "endpoint": {
+        "method": "GET",
+        "path": "/system-config/defaults"
+      },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/image/required/thumbnail",
+          "target": "required_member",
+          "member": "thumbnail",
+          "operation": "added",
+          "before": {
+            "present": false
+          },
+          "after": {
+            "present": true,
+            "value": "thumbnail"
+          }
+        }
+      }
+    },
+    {
+      "id": "vc1_940b60373ddf29bae71ebdd7b7756299dea34e9a9a0bdc5753275deaa391086a",
+      "endpoint": {
+        "method": "GET",
+        "path": "/server/version-history"
+      },
+      "kind": "endpoint_added",
+      "severity": "non_breaking",
+      "details": {}
+    }
+  ]
+}

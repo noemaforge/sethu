@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "vimanam",
+    "version": "1.3.0"
+  },
+  "old": {
+    "title": "T",
+    "version": "1",
+    "file_sha256": "99a3df038ecad69f4c2ac9e68f62182afbb5feddf195aa22895b9a509c5b32a8"
+  },
+  "new": {
+    "title": "T",
+    "version": "1",
+    "file_sha256": "677cdc810fe3a32fc50ee393ac278fbbbde220d1509ff6b7986c68018c3dfe61"
+  },
+  "summary": {
+    "endpoints_added": 0,
+    "endpoints_removed": 0,
+    "endpoints_changed": 1,
+    "breaking": 0,
+    "non_breaking": 1,
+    "review": 0
+  },
+  "changes": [
+    {
+      "id": "vc1_80787511eb5de85c368a0778cb63ea27efba346dd9b0fe9373631938f33640d5",
+      "endpoint": {
+        "method": "GET",
+        "path": "/widgets"
+      },
+      "kind": "operation_id_changed",
+      "severity": "non_breaking",
+      "details": {
+        "old": null,
+        "new": "listWidgets"
+      }
+    }
+  ]
+}

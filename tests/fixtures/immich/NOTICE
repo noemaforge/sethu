@@ -1,0 +1,12 @@
+Immich OpenAPI specs.
+
+These files are unmodified upstream specs from immich-app/immich. They carry
+the AGPL-3.0-only license.
+
+- old.json: release v1.116.2, commit 8bbcd5c31e4a227f92864ae2977c4033bc0c50b7
+- new.json: release v1.117.0, commit 6b8462402ba2fa48d4ddbce924b5e3e0987155eb
+
+SHA-256:
+
+ff2d4e2a7c35cbcf0ef0b8ca50158bf7711bc200a80f4cdcf0a51208403631c5  old.json
+a5c98c5cf35f9b42a412a3aaee7c1e1f597279cc7c8a88cc090d7a7e21aedd26  new.json

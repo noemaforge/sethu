@@ -10,6 +10,7 @@ use clap::Parser;
 mod cli;
 mod commands;
 mod state;
+mod vimanam;
 
 use cli::{Cli, Command};
 
