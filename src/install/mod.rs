@@ -371,11 +371,13 @@ pub fn install_into(repo: &Path) -> anyhow::Result<InstallReport> {
 
 /// Add `.sethu/` to the repository exclude file.
 ///
-/// A missing file or missing parent directories come into being. A present
-/// entry stays exactly where it is. The function never duplicates the line
-/// and reports whether it wrote anything.
+/// The exclude file lives in the git directory, which sits outside the
+/// checkout for a linked worktree. Asking git for the directory keeps those
+/// checkouts working. A missing file or missing parent directories come into
+/// being. A present entry stays exactly where it is. The function never
+/// duplicates the line and reports whether it wrote anything.
 pub fn ensure_exclude(repo: &Path) -> anyhow::Result<bool> {
-    let path = repo.join(".git").join("info").join("exclude");
+    let path = exclude_path(repo);
     let text = read_optional_text(&path)?.unwrap_or_default();
     if text.lines().any(|line| line.trim() == EXCLUDE_LINE) {
         return Ok(false);
@@ -389,6 +391,55 @@ pub fn ensure_exclude(repo: &Path) -> anyhow::Result<bool> {
     atomic::write_atomic(&path, next.as_bytes())
         .with_context(|| format!("write repository exclude file {}", path.display()))?;
     Ok(true)
+}
+
+/// Resolve the repository exclude file through git.
+///
+/// A linked worktree keeps its git directory outside the checkout, with
+/// `.git` as a file pointing at it. Asking git finds the real directory.
+/// When git stays silent, the plain `.git` directory below the checkout
+/// applies, so plain directories keep the old behavior.
+fn exclude_path(repo: &Path) -> PathBuf {
+    match git_dir(repo) {
+        Ok(dir) => dir.join("info").join("exclude"),
+        Err(_) => repo.join(".git").join("info").join("exclude"),
+    }
+}
+
+/// Ask git for the directory holding repository metadata.
+///
+/// The answer may be relative, so relative answers resolve against the
+/// checkout. Every spawn sets its working directory and captures both
+/// streams.
+fn git_dir(repo: &Path) -> anyhow::Result<PathBuf> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("--git-dir")
+        .current_dir(repo)
+        .output()
+        .with_context(|| format!("run `git rev-parse --git-dir` in {}", repo.display()))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "`git rev-parse --git-dir` failed in {}: {}",
+            repo.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let raw = String::from_utf8(output.stdout)
+        .with_context(|| format!("read git directory of {}", repo.display()))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!(
+            "`git rev-parse --git-dir` printed nothing in {}",
+            repo.display()
+        );
+    }
+    let dir = PathBuf::from(trimmed);
+    if dir.is_absolute() {
+        Ok(dir)
+    } else {
+        Ok(repo.join(dir))
+    }
 }
 
 /// Ensure the nextest `sethu` profile in the runner config.

@@ -829,6 +829,65 @@ fn install_reports_tools_and_capabilities() {
 }
 
 #[test]
+fn install_into_linked_worktree_completes_and_repeats() {
+    let main = git_repo();
+    let holder = tempfile::tempdir().unwrap();
+    let linked = holder.path().join("linked");
+    let linked_arg = linked.to_string_lossy().into_owned();
+    git(main.path(), &["worktree", "add", linked_arg.as_str()]);
+
+    sethu()
+        .arg("install")
+        .arg(&linked)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("installed into"));
+    assert!(
+        linked.join(".bob/commands/api-upgrade.md").is_file(),
+        "owned files land in the linked checkout"
+    );
+    assert!(
+        linked.join(".sethu/installation.json").is_file(),
+        "the record lands in the linked checkout"
+    );
+
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(&linked)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "the linked checkout stays a repo");
+    let raw = String::from_utf8(output.stdout).unwrap();
+    let git_dir = raw.trim();
+    let git_dir = if Path::new(git_dir).is_absolute() {
+        PathBuf::from(git_dir)
+    } else {
+        linked.join(git_dir)
+    };
+    let exclude = std::fs::read_to_string(git_dir.join("info").join("exclude")).unwrap();
+    assert_eq!(
+        exclude
+            .lines()
+            .filter(|line| line.trim() == ".sethu/")
+            .count(),
+        1,
+        "the exclude line lands once in the resolved git directory"
+    );
+
+    let before = snapshot(&linked);
+    install_ok(&linked);
+    let after = snapshot(&linked);
+    assert_eq!(
+        before, after,
+        "a repeat install in the linked checkout changes nothing"
+    );
+    assert!(
+        install::read_installation(&linked).unwrap().is_some(),
+        "the record survives the rerun"
+    );
+}
+
+#[test]
 fn install_into_reports_structured_outcomes() {
     let dir = git_repo();
     let first = install::install_into(dir.path()).unwrap();
