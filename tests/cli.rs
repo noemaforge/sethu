@@ -314,7 +314,6 @@ fn stub_empty_scenarios_prints_readiness_line() {
 fn planned_commands_exit_1_with_not_available() {
     let document = capabilities_json();
     let commands = document["commands"].as_object().unwrap();
-    let mut planned = 0;
     for (name, entry) in commands {
         if entry["status"] != "planned" {
             continue;
@@ -328,9 +327,8 @@ fn planned_commands_exit_1_with_not_available() {
             .code(1)
             .stderr(predicate::str::contains("not available yet"))
             .stdout(predicate::str::is_empty());
-        planned += 1;
     }
-    assert!(planned > 0, "expected at least one planned command");
+    // An empty planned set is the converged end state.
 }
 
 #[test]
