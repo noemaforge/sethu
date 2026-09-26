@@ -79,14 +79,16 @@ Every review answers these before the verdict.
 ## Worktrees and roles
 
 **Every writer works in its own git worktree and commits.** A commit is the only handoff between
-roles. Worktrees live under `/home/nryn/work/sethu-wt/`, outside the repository.
+roles. Worktrees live under `/home/nryn/work/sethu/.worktrees/`, which `.gitignore` excludes.
+Never open Bob IDE or run a whole-repository search from the main checkout's root, because it
+reaches every worktree's copy. Open the worktree itself.
 
 ```bash
-git -C /home/nryn/work/sethu worktree add -b task/<id> /home/nryn/work/sethu-wt/<id>-impl main
+git -C /home/nryn/work/sethu worktree add -b task/<id> /home/nryn/work/sethu/.worktrees/<id>-impl main
 ```
 
 ```bash
-git -C /home/nryn/work/sethu worktree add --detach /home/nryn/work/sethu-wt/<id>-rev-r1 <hash>
+git -C /home/nryn/work/sethu worktree add --detach /home/nryn/work/sethu/.worktrees/<id>-rev-r1 <hash>
 ```
 
 | Role | Does | Never does |
@@ -119,6 +121,9 @@ status:   not-started
 
 - **requires** binds. A shared path is a dependency, so the later task names the earlier one.
 - **owns** lists the paths a task writes. No two concurrent tasks own the same path.
+- **A new module's declaration is implied.** A task that adds a module may add its own one-line
+  `pub mod` declaration to `src/lib.rs`, in alphabetical order, without listing that file. Two such
+  lines landing together are resolved by the orchestrator at rebase.
 - **size** runs XS, S, M, L.
 - **bob** is `no`, `candidate` or `person` (see "Bob and Bobcoins").
 - **status** is `not-started`, `in-progress:<role>:<worktree>`, `done:<hash>` or `blocked:<reason>`.
@@ -137,6 +142,16 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo nextest 
 
 `tools/check.sh` replaces this line once a task lands it. The gate also fails on plan references in
 tracked source files.
+
+## Reference data
+
+Never fetch a spec or a Vimanam output from the network. The pinned inputs are already here.
+
+- **Immich specs:** `tests/fixtures/immich/old.json` (v1.116.2) and `new.json` (v1.117.0), with
+  their commits and hashes in `NOTICE`.
+- **Vimanam output:** `tests/fixtures/vimanam-1.3.0/` and `vimanam-1.2.0/`.
+- A task that runs outside this repository, such as the demo consumer, reads these by absolute path
+  from the main checkout.
 
 ## A pin is a measurement
 

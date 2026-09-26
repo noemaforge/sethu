@@ -1,6 +1,9 @@
 # The plan stays local for now. It lives only in the main checkout.
 /dev-diary/
 
+# Task worktrees. Each is a separate checkout of this repository.
+/.worktrees/
+
 # Build output.
 /target/
 
