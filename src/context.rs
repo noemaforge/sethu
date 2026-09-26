@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::cli::ContextLevel;
+use crate::provenance::{Origin, OriginsDocument};
 use crate::vimanam::{ChangeRecord, DetailLevel, Severity};
 
 /// HTTP methods that can carry an operation object.
@@ -22,12 +23,6 @@ use crate::vimanam::{ChangeRecord, DetailLevel, Severity};
 const METHOD_NAMES: &[&str] = &[
     "get", "put", "post", "delete", "options", "head", "patch", "trace",
 ];
-
-/// Number of required changes per prepared group.
-///
-/// Groups partition the required set in capture order. Numbering starts at
-/// one. Ten changes fit one focused investigation without drowning it.
-pub const PREPARE_GROUP_SIZE: usize = 10;
 
 /// Largest section kept inline before chunk files take over.
 ///
@@ -253,31 +248,62 @@ pub fn required_ids(changes: &[ChangeRecord]) -> Vec<String> {
         .collect()
 }
 
+/// Partition the required ids into the origin groups the listing prints.
+///
+/// Component origins sort by component name, operation origins sort by
+/// position, and unknown origins sort last. Members keep capture order.
+/// The listing command keeps its grouping helpers private to its own
+/// module, so this repeats the same origin rule here and both numbers
+/// select the same ids. A missing origins map reads as unknown for every
+/// change, matching the listing fallback for older captures.
+pub fn prepare_groups(
+    changes: &[ChangeRecord],
+    origins: Option<&OriginsDocument>,
+) -> Vec<Vec<String>> {
+    let mut members: BTreeMap<(u8, String), Vec<String>> = BTreeMap::new();
+    for id in required_ids(changes) {
+        let origin = origins
+            .and_then(|document| document.origins.get(&id))
+            .cloned()
+            .unwrap_or(Origin::Unknown);
+        let key = match &origin {
+            Origin::Component { name } => (0, format!("component {name}")),
+            Origin::Operation { position, .. } => (1, format!("operation {position}")),
+            Origin::Unknown => (2, "unknown".to_string()),
+        };
+        members.entry(key).or_default().push(id);
+    }
+    members.into_values().collect()
+}
+
 /// Resolve a prepare selector against the required set.
 ///
 /// The selector accepts `all` for every required id, a 1 based group number
-/// over groups of [`PREPARE_GROUP_SIZE`], or a comma separated list of ids.
-/// Group numbers count from one in capture order. Unknown ids, empty lists,
-/// and out of range groups all fail with the selector named.
-pub fn resolve_group(wanted: &str, required: &[String]) -> anyhow::Result<Vec<String>> {
+/// over the origin groups the listing prints, or a comma separated list of
+/// ids. Group numbers count from one in listing order. Unknown ids, empty
+/// lists, and out of range groups all fail with the selector named.
+pub fn resolve_group(
+    wanted: &str,
+    changes: &[ChangeRecord],
+    origins: Option<&OriginsDocument>,
+) -> anyhow::Result<Vec<String>> {
+    let required = required_ids(changes);
     let trimmed = wanted.trim();
     if trimmed == "all" {
-        return Ok(required.to_vec());
+        return Ok(required);
     }
     if !trimmed.is_empty() && trimmed.bytes().all(|byte| byte.is_ascii_digit()) {
         let number: usize = trimmed
             .parse()
             .with_context(|| format!("parse prepare group {trimmed:?} as a number"))?;
-        let groups = required.len().div_ceil(PREPARE_GROUP_SIZE);
-        if number < 1 || number > groups {
+        let groups = prepare_groups(changes, origins);
+        let total = groups.len();
+        if number < 1 || number > total {
             anyhow::bail!(
-                "prepare group {number} is out of range, there are {groups} groups of {required_len} required changes",
-                required_len = required.len()
+                "prepare group {number} is out of range, this attempt has {total} required groups"
             );
         }
-        let start = (number - 1) * PREPARE_GROUP_SIZE;
-        let end = (start + PREPARE_GROUP_SIZE).min(required.len());
-        return Ok(required[start..end].to_vec());
+        return Ok(groups[number - 1].clone());
     }
     let mut ids = Vec::new();
     for part in trimmed.split(',') {
@@ -301,7 +327,35 @@ pub fn resolve_group(wanted: &str, required: &[String]) -> anyhow::Result<Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::SCHEMA_VERSION;
+    use crate::vimanam::{ChangeDetails, ChangeKind, EndpointRef};
+    use indexmap::IndexMap;
     use serde_json::json;
+
+    /// Build one change record with a fixed endpoint and kind.
+    fn record(id: &str, severity: Severity) -> ChangeRecord {
+        ChangeRecord {
+            id: id.to_string(),
+            endpoint: EndpointRef {
+                method: "GET".to_string(),
+                path: "/widgets".to_string(),
+            },
+            kind: ChangeKind::ResponseSchemaChanged,
+            severity,
+            details: ChangeDetails::default(),
+        }
+    }
+
+    /// Build an origins map from id and origin pairs.
+    fn origins(pairs: Vec<(&str, Origin)>) -> OriginsDocument {
+        OriginsDocument {
+            schema_version: SCHEMA_VERSION,
+            origins: pairs
+                .into_iter()
+                .map(|(id, origin)| (id.to_string(), origin))
+                .collect::<IndexMap<String, Origin>>(),
+        }
+    }
 
     #[test]
     fn detail_mapping_covers_every_level() {
@@ -407,30 +461,93 @@ mod tests {
     }
 
     #[test]
-    fn group_resolution_covers_all_forms() {
-        let required: Vec<String> = (1..=12).map(|n| format!("vc1_{n:04}")).collect();
-        assert_eq!(resolve_group("all", &required).unwrap(), required);
+    fn group_resolution_follows_origin_groups() {
+        let changes = vec![
+            record("vc1_0001", Severity::Breaking),
+            record("vc1_0002", Severity::Review),
+            record("vc1_0003", Severity::Breaking),
+            record("vc1_0004", Severity::Review),
+            record("vc1_0005", Severity::NonBreaking),
+        ];
+        let document = origins(vec![
+            (
+                "vc1_0001",
+                Origin::Component {
+                    name: "Beta".to_string(),
+                },
+            ),
+            (
+                "vc1_0003",
+                Origin::Component {
+                    name: "Beta".to_string(),
+                },
+            ),
+            (
+                "vc1_0002",
+                Origin::Component {
+                    name: "Alpha".to_string(),
+                },
+            ),
+        ]);
+        let origins = Some(&document);
+        let required = vec![
+            "vc1_0001".to_string(),
+            "vc1_0002".to_string(),
+            "vc1_0003".to_string(),
+            "vc1_0004".to_string(),
+        ];
+        assert_eq!(resolve_group("all", &changes, origins).unwrap(), required);
         assert_eq!(
-            resolve_group("1", &required).unwrap(),
-            required[..10].to_vec()
+            resolve_group("1", &changes, origins).unwrap(),
+            vec!["vc1_0002".to_string()]
         );
         assert_eq!(
-            resolve_group("2", &required).unwrap(),
-            required[10..].to_vec()
+            resolve_group("2", &changes, origins).unwrap(),
+            vec!["vc1_0001".to_string(), "vc1_0003".to_string()]
         );
         assert_eq!(
-            resolve_group("vc1_0003, vc1_0001,vc1_0003", &required).unwrap(),
+            resolve_group("3", &changes, origins).unwrap(),
+            vec!["vc1_0004".to_string()]
+        );
+        assert_eq!(
+            resolve_group("vc1_0003, vc1_0001,vc1_0003", &changes, origins).unwrap(),
             vec!["vc1_0003".to_string(), "vc1_0001".to_string()]
         );
     }
 
     #[test]
     fn group_resolution_rejects_bad_selectors() {
-        let required = vec!["vc1_0001".to_string()];
-        assert!(resolve_group("0", &required).is_err());
-        assert!(resolve_group("2", &required).is_err());
-        assert!(resolve_group("vc1_9999", &required).is_err());
-        assert!(resolve_group("", &required).is_err());
-        assert!(resolve_group("all", &[]).unwrap().is_empty());
+        let changes = vec![record("vc1_0001", Severity::Breaking)];
+        let document = origins(vec![]);
+        let origins = Some(&document);
+        assert!(resolve_group("0", &changes, origins).is_err());
+        assert!(resolve_group("2", &changes, origins).is_err());
+        assert!(resolve_group("vc1_9999", &changes, origins).is_err());
+        assert!(resolve_group("vc1_0001", &[], origins).is_err());
+        assert!(resolve_group("", &changes, origins).is_err());
+        assert!(resolve_group("all", &[], origins).unwrap().is_empty());
+    }
+
+    #[test]
+    fn group_resolution_without_origins_uses_one_unknown_group() {
+        let changes = vec![
+            record("vc1_0001", Severity::Breaking),
+            record("vc1_0002", Severity::Review),
+        ];
+        let required = vec!["vc1_0001".to_string(), "vc1_0002".to_string()];
+        assert_eq!(resolve_group("all", &changes, None).unwrap(), required);
+        assert_eq!(resolve_group("1", &changes, None).unwrap(), required);
+        assert!(resolve_group("2", &changes, None).is_err());
+    }
+
+    #[test]
+    fn out_of_range_names_the_group_scheme() {
+        let changes = vec![record("vc1_0001", Severity::Breaking)];
+        let err = resolve_group("7", &changes, None).unwrap_err();
+        assert!(
+            err.to_string().contains("7 is out of range")
+                && err.to_string().contains("1 required groups"),
+            "unexpected error: {err:#}"
+        );
     }
 }

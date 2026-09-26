@@ -102,6 +102,13 @@ fn load_attempt(repo: &Path) -> (PathBuf, PathBuf, Vec<sethu::vimanam::ChangeRec
     (migration, capture, document.changes)
 }
 
+/// Run `sethu changes` with the repository as working directory.
+fn changes_cmd(repo: &Path, args: &[&str]) -> Command {
+    let mut cmd = Command::cargo_bin("sethu").unwrap();
+    cmd.arg("changes").args(args).current_dir(repo);
+    cmd
+}
+
 /// Run `sethu context` with the repository as working directory.
 fn context_cmd(repo: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::cargo_bin("sethu").unwrap();
@@ -267,6 +274,96 @@ fn prepare_writes_a_complete_set() {
     let rendering = std::fs::read_to_string(random_dir.join("rendering-old.md")).unwrap();
     assert!(rendering.contains("POST /search/random"));
     assert!(!rendering.contains("/search/metadata"));
+}
+
+/// Read the change ids of one numbered group from human output.
+///
+/// Change lines carry the full id first, indented past the operation line.
+fn group_ids(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter(|line| line.starts_with("      "))
+        .map(|line| line.split_whitespace().next().unwrap().to_string())
+        .collect()
+}
+
+/// Count the groups named in the required section header.
+fn required_group_total(stdout: &str) -> usize {
+    let header = stdout
+        .lines()
+        .next()
+        .expect("output names the required set");
+    header
+        .rsplit(' ')
+        .nth(1)
+        .expect("header ends with a group count")
+        .parse()
+        .expect("group count parses as a number")
+}
+
+#[test]
+fn prepare_group_numbers_match_changes_groups() {
+    if !need_vimanam("prepare_group_numbers_match_changes_groups") {
+        return;
+    }
+    let (_repo, _) = init_git_repo();
+    let repo = _repo.path();
+    init_pair(
+        &fixture("immich/old.json"),
+        &fixture("immich/new.json"),
+        repo,
+    );
+    let (migration, _, changes) = load_attempt(repo);
+    let positional = changes.first().expect("capture holds changes").id.clone();
+
+    let listed = changes_cmd(repo, &[])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let total = required_group_total(&String::from_utf8(listed).unwrap());
+    assert!(total >= 2, "expected several groups, got {total}");
+
+    let context_dir = layout::context_dir(&migration);
+    for number in 1..=total {
+        let listed = changes_cmd(repo, &[&format!("--group={number}")])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let mut wanted = group_ids(&String::from_utf8(listed).unwrap());
+        wanted.sort();
+        assert!(!wanted.is_empty(), "group {number} names no changes");
+
+        if context_dir.exists() {
+            std::fs::remove_dir_all(&context_dir).unwrap();
+        }
+        context_cmd(repo, &[&positional, "--prepare", &number.to_string()])
+            .assert()
+            .success();
+        let mut prepared: Vec<String> = std::fs::read_dir(&context_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_str().unwrap().to_string())
+            .collect();
+        prepared.sort();
+        assert_eq!(
+            prepared, wanted,
+            "prepare {number} selects different ids than group {number}"
+        );
+    }
+
+    context_cmd(repo, &[&positional, "--prepare", "0"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("required groups"));
+    context_cmd(repo, &[&positional, "--prepare", &format!("{}", total + 1)])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("required groups"));
 }
 
 #[test]

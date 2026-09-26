@@ -106,8 +106,8 @@ pub fn run(args: &ContextArgs) -> anyhow::Result<ExitCode> {
     let detail = crate::context::detail_for(&args.level);
 
     if let Some(selector) = args.prepare.as_deref() {
-        let required = crate::context::required_ids(&resolved.changes);
-        let ids = crate::context::resolve_group(selector, &required)?;
+        let ids =
+            crate::context::resolve_group(selector, &resolved.changes, resolved.origins.as_ref())?;
         if ids.is_empty() {
             anyhow::bail!("prepare selection {selector:?} names no changes");
         }
