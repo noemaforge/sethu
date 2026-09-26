@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 use sethu::state;
 use sethu::state::atomic;
 use sethu::state::layout;
-use state::{
-    CaptureFile, ChangeRef, ChangesFile, Installation, LedgerEntry, LedgerFile, MigrationManifest,
-    OriginsFile, PairFile,
-};
+use state::{CaptureFile, ChangeRef, ChangesFile, MigrationManifest, PairFile};
 
 fn temp_root() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
@@ -102,79 +99,27 @@ fn simulated_crash_before_first_write_leaves_no_target() {
 #[test]
 fn write_after_crash_parses_cleanly() {
     let root = temp_root();
-    let path = root.path().join("installation.json");
+    let path = root.path().join("changes.json");
     leave_stale_temp(root.path(), b"{broken");
-    let value = Installation::new("0.1.0");
+    let value = ChangesFile::new(vec![ChangeRef::new("chg-1", "breaking")]);
     state::write_state_file(&path, &value).unwrap();
-    let back: Installation = state::read_state_file(&path).unwrap();
+    let back: ChangesFile = state::read_state_file(&path).unwrap();
     back.validate().unwrap();
     assert_eq!(back, value);
 }
 
 #[test]
-fn installation_envelope_stamps_supported_version() {
-    let root = temp_root();
-    let path = root.path().join("installation.json");
-    let value = Installation::new("0.1.0");
-    state::write_state_file(&path, &value).unwrap();
-    let raw = std::fs::read_to_string(&path).unwrap();
-    assert!(raw.contains("\"schema_version\""));
-    let back: Installation = state::read_state_file(&path).unwrap();
-    back.validate().unwrap();
-    assert_eq!(back.schema_version, state::SCHEMA_VERSION);
-    assert_eq!(back.sethu_version, "0.1.0");
-}
-
-#[test]
-fn unknown_schema_version_fails_validation() {
-    let root = temp_root();
-    let path = root.path().join("installation.json");
-    atomic::write_atomic(&path, br#"{"schema_version":999,"sethu_version":"x"}"#).unwrap();
-    let back: Installation = state::read_state_file(&path).unwrap();
-    assert!(back.validate().is_err());
-}
-
-#[test]
-fn ledger_keeps_insertion_order() {
-    let root = temp_root();
-    let path = root.path().join("ledger.json");
-    let mut entries = indexmap::IndexMap::new();
-    entries.insert("zeta".to_string(), LedgerEntry::new("unresolved", None));
-    entries.insert("alpha".to_string(), LedgerEntry::new("fixed", Some("ok")));
-    let ledger = LedgerFile::new(entries);
-    state::write_state_file(&path, &ledger).unwrap();
-    let raw = std::fs::read_to_string(&path).unwrap();
-    let first = raw.find("zeta").unwrap();
-    let second = raw.find("alpha").unwrap();
-    assert!(first < second);
-    let back: LedgerFile = state::read_state_file(&path).unwrap();
-    back.validate().unwrap();
-    let keys: Vec<&str> = back.entries.keys().map(String::as_str).collect();
-    assert_eq!(keys, vec!["zeta", "alpha"]);
-    assert_eq!(back, ledger);
-}
-
-#[test]
-fn changes_and_origins_stamp_supported_version() {
+fn changes_stamp_supported_version() {
     let root = temp_root();
     let changes_path = root.path().join("changes.json");
-    let origins_path = root.path().join("origins.json");
     let changes = ChangesFile::new(vec![
         ChangeRef::new("chg-1", "breaking"),
         ChangeRef::new("chg-2", "cosmetic"),
     ]);
     state::write_state_file(&changes_path, &changes).unwrap();
-    let mut origins_map = indexmap::IndexMap::new();
-    origins_map.insert("chg-1".to_string(), "diff".to_string());
-    origins_map.insert("chg-2".to_string(), "trace".to_string());
-    let origins = OriginsFile::new(origins_map);
-    state::write_state_file(&origins_path, &origins).unwrap();
     let back_changes: ChangesFile = state::read_state_file(&changes_path).unwrap();
     back_changes.validate().unwrap();
     assert_eq!(back_changes, changes);
-    let back_origins: OriginsFile = state::read_state_file(&origins_path).unwrap();
-    back_origins.validate().unwrap();
-    assert_eq!(back_origins, origins);
 }
 
 #[test]
