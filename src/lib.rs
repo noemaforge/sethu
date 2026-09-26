@@ -19,6 +19,8 @@ pub mod provenance;
 pub mod state;
 /// Fixture server pieces for contract-sensitive behaviour.
 pub mod stub;
+/// Attributable verification runs for one migration attempt.
+pub mod verify;
 /// Subprocess adapter for the contract diff tool.
 pub mod vimanam;
 
