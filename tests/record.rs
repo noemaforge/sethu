@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use sethu::commands::record::ledger::{Ledger, Outcome};
 use sethu::state::attempt::AttemptRecord;
 use sethu::state::layout;
+use sethu::state::ledger::{Ledger, Outcome};
 
 /// Locate a checked in fixture by path under the crate root.
 fn fixture(name: &str) -> PathBuf {

@@ -18,7 +18,9 @@ pub const STATUS: Status = Status::Available;
 /// The command hashes both specs, refuses external references, stores
 /// the pair with its provenance, runs the contract diff, stores the
 /// output as an immutable capture, and binds one capture to the consumer
-/// repository state as a migration attempt. A rerun with identical
+/// repository state as a migration attempt. A fresh capture also gains an
+/// origins file that maps each change to its source. A reused capture
+/// keeps its stored origins file untouched. A rerun with identical
 /// inputs resumes the same attempt. Any change starts a new attempt and
 /// leaves stored captures and ledgers alone. `list` mode prints stored
 /// attempts for the pair and changes nothing.
@@ -83,7 +85,11 @@ pub fn run(args: &InitArgs) -> anyhow::Result<ExitCode> {
         changes: &document,
         changes_bytes: &changes_bytes,
     };
-    let (_, capture_new) = capture::find_or_create_capture(&pair_dir, &fresh_capture)?;
+    let (capture_dir, capture_new) = capture::find_or_create_capture(&pair_dir, &fresh_capture)?;
+    if capture_new {
+        let origins = crate::provenance::origins_for_capture(&capture_dir)?;
+        crate::provenance::write_origins(&capture_dir, &origins)?;
+    }
 
     let scope = attempt::normalize_scope(&args.scope);
     let sethu_version = attempt::current_sethu_version();

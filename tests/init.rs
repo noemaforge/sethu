@@ -185,6 +185,17 @@ fn initialises_immich_pair_with_pinned_hashes() {
         .collect();
     assert_eq!(live, wanted);
 
+    let origins = sethu::provenance::read_origins(&capture).unwrap();
+    origins.validate().unwrap();
+    assert_eq!(origins.origins.len(), document.changes.len());
+    for item in &document.changes {
+        assert!(
+            origins.origins.contains_key(item.id.as_str()),
+            "fresh capture is missing an origin for {}",
+            item.id
+        );
+    }
+
     let (_, manifest) = only_attempt(&root);
     manifest.validate().unwrap();
     assert_eq!(manifest.old_spec_hash, OLD_SHA);
@@ -216,6 +227,7 @@ fn rerun_resumes_and_keeps_ledger() {
     let capture = layout::capture_dir(&pair, &manifest.capture_id);
     let changes_before = std::fs::read(layout::changes_file(&capture)).unwrap();
     let record_before = std::fs::read(layout::capture_file(&capture)).unwrap();
+    let origins_before = std::fs::read(layout::origins_file(&capture)).unwrap();
 
     let mut entries = indexmap::IndexMap::new();
     entries.insert(
@@ -241,6 +253,10 @@ fn rerun_resumes_and_keeps_ledger() {
     assert_eq!(
         std::fs::read(layout::capture_file(&capture)).unwrap(),
         record_before
+    );
+    assert_eq!(
+        std::fs::read(layout::origins_file(&capture)).unwrap(),
+        origins_before
     );
     assert_eq!(
         std::fs::read(layout::ledger_path(&attempt_dir)).unwrap(),

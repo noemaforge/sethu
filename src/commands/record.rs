@@ -1,13 +1,5 @@
 //! Implementation of `sethu record`.
 
-/// Outcome ledger for one migration attempt.
-///
-/// The state module does not declare the ledger file yet, so this
-/// command includes it by path. The include gives way to a plain
-/// declaration once the parent module names the file.
-#[path = "../state/ledger.rs"]
-pub mod ledger;
-
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -18,6 +10,7 @@ use crate::cli::RecordArgs;
 use crate::commands::Status;
 use crate::state::attempt::AttemptRecord;
 use crate::state::layout;
+use crate::state::ledger;
 
 /// Build-time status of this command.
 pub const STATUS: Status = Status::Available;

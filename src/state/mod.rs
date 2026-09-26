@@ -8,6 +8,7 @@ pub mod atomic;
 pub mod attempt;
 pub mod capture;
 pub mod layout;
+pub mod ledger;
 pub mod pair;
 
 use std::path::Path;
