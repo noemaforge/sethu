@@ -14,7 +14,7 @@ Options:
       --json          Output as JSON
 ```
 
-The JSON document carries `schema_version`, `sethu`, and `pack` version strings. Its `vimanam` object carries `found`, `version`, and `supported`. Its `git` and `nextest` objects carry `found` and `version`. Its `commands` object lists `install`, `init`, `changes`, `context`, `record`, `check`, `stub`, `verify`, `report`, and `scan`. Each entry carries `status` as `available`, `planned`, or `unavailable`. An `unavailable` entry always carries a `reason`.
+The JSON document carries `schema_version`, `sethu`, and `pack` version strings. Its `vimanam` object carries `found` and `supported`, plus `version` when the probe reads one. Its `git` and `nextest` objects carry `found`, plus `version` when the probe reads one. Its `commands` object lists `install`, `init`, `changes`, `context`, `record`, `check`, `stub`, `verify`, `report`, and `scan`. Each entry carries `status` as `available`, `planned`, or `unavailable`. An `unavailable` entry always carries a `reason`.
 
 ## `sethu install <REPO>`
 
