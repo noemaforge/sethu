@@ -1,0 +1,16 @@
+# The plan stays local for now. It lives only in the main checkout.
+/dev-diary/
+
+# Build output.
+/target/
+
+# Secrets never land here, even though Sethu needs none.
+.env
+.env.*
+
+# Editor swap and backup files.
+*~
+*.kate-swp
+.*.kate-swp
+.*.sw[a-p]
+*.sw[a-p]
