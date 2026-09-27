@@ -12,12 +12,24 @@ jobs:
   validate:
     if: github.repository == 'noemaforge/sethu'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
-          components: rustfmt, clippy
+      - name: Require successful main CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_SHA: ${{ github.sha }}
+        run: |
+          runs=$(gh api --method GET "repos/$GH_REPO/actions/workflows/ci.yml/runs" \
+            -f head_sha="$TAG_SHA" -f branch=main -f event=push -f per_page=100)
+          echo "$runs" | jq -e --arg sha "$TAG_SHA" \
+            '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main" and .event == "push" and .status == "completed" and .conclusion == "success")] | length > 0' > /dev/null
       - name: Check version and registry
         env:
           TAG: ${{ github.ref_name }}
@@ -31,19 +43,6 @@ jobs:
           fi
           echo "crates.io registry HTTP $status"
           test "$status" = 404
-      - name: Install required tools
-        run: |
-          cargo install vimanam --version '=1.3.0' --locked
-          cargo install cargo-nextest --version '=0.9.146' --locked
-      - name: Fetch demo consumer dependencies
-        run: |
-          commit=$(sed -n 's/^pub const DEMO_COMMIT: &str = "\([0-9a-f]*\)";$/\1/p' tests/common/mod.rs)
-          test -n "$commit"
-          git clone -q https://github.com/noemaforge/sethu-demo-picker "$RUNNER_TEMP/demo"
-          git -C "$RUNNER_TEMP/demo" checkout -q "$commit"
-          cargo fetch --locked --manifest-path "$RUNNER_TEMP/demo/Cargo.toml"
-      - name: Run gate
-        run: bash tools/check.sh
       - name: Check crate package
         run: |
           cargo package --locked --list > "$RUNNER_TEMP/package-files.txt"
