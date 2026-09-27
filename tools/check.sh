@@ -34,31 +34,31 @@ for f in $TRACKED; do
         continue
     fi
     # Task ids: T<digits>.<digits> with optional trailing b
-    if grep -nP '\bT[0-9]+\.[0-9]+b?\b' "$f"; then
+    if grep -InP '\bT[0-9]+\.[0-9]+b?\b' "$f"; then
         echo "FAIL: plan reference (task id) in $f" >&2
         FAIL=1
     fi
     # Section marker
-    if grep -nF '§' "$f"; then
+    if grep -InF '§' "$f"; then
         echo "FAIL: plan reference (section marker) in $f" >&2
         FAIL=1
     fi
     # Design and diary paths
-    if grep -nF 'design.md' "$f"; then
+    if grep -InF 'design.md' "$f"; then
         echo "FAIL: plan reference (design.md) in $f" >&2
         FAIL=1
     fi
-    if grep -nF 'dev-diary' "$f"; then
+    if grep -InF 'dev-diary' "$f"; then
         echo "FAIL: plan reference (dev-diary) in $f" >&2
         FAIL=1
     fi
     # Review rounds
-    if grep -nP 'round[0-9]|remediation' "$f"; then
+    if grep -InP 'round[0-9]|remediation' "$f"; then
         echo "FAIL: plan reference (review round) in $f" >&2
         FAIL=1
     fi
     # Machine-local home paths, which exist on no other machine
-    if grep -nF '/home/' "$f"; then
+    if grep -InF '/home/' "$f"; then
         echo "FAIL: machine-local path (/home/) in $f" >&2
         FAIL=1
     fi
