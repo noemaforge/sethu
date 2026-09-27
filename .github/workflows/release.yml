@@ -25,7 +25,11 @@ jobs:
           version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -1)
           test -n "$version"
           test "$TAG" = "v$version"
-          status=$(curl --retry 3 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/sethu/$version")
+          if ! status=$(curl --retry 3 --silent --show-error --output /dev/null --write-out '%{http_code}' --user-agent 'sethu-release-preflight/1.0 (+https://github.com/noemaforge/sethu)' "https://crates.io/api/v1/crates/sethu/$version"); then
+            echo "crates.io registry request failed (HTTP $status)" >&2
+            exit 1
+          fi
+          echo "crates.io registry HTTP $status"
           test "$status" = 404
       - name: Install required tools
         run: |
