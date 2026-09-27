@@ -44,6 +44,72 @@ pub fn skip(test_name: &str, reason: &str) {
     eprintln!("SKIP {test_name}: {reason}");
 }
 
+/// Subdirectory of cargo's integration test scratch area that holds the
+/// demo consumer's build outputs.
+const DEMO_TARGET: &str = "demo-consumer-target";
+
+/// Lock file beside [`DEMO_TARGET`] that gives one test at a time the
+/// shared build directory.
+const DEMO_LOCK: &str = "demo-consumer-target.lock";
+
+/// Build directory every demo test hands to cargo as `CARGO_TARGET_DIR`.
+///
+/// The path is fixed under Sethu's own `target/`, so it holds one demo
+/// consumer build, never grows per run, and `cargo clean` removes it.
+/// Every test reuses the compiled dependencies. Only the consumer crate
+/// itself rebuilds when a stage's sources differ. A test hands it to
+/// cargo only while it holds a [`DemoBuild`].
+pub fn demo_target_dir() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join(DEMO_TARGET)
+}
+
+/// Lock file that [`DemoBuild`] holds.
+#[allow(
+    dead_code,
+    reason = "only the lock check opens the file directly, so some test crates never call this"
+)]
+pub fn demo_lock_path() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join(DEMO_LOCK)
+}
+
+/// Exclusive hold on the shared demo build directory.
+///
+/// Nextest runs every test in its own process, so the hold is an
+/// operating system file lock rather than an in-process mutex. The
+/// lock is released when the value drops or the process dies.
+///
+/// Cargo's own build lock only takes turns per build. It does not stop a
+/// stale reuse. Cargo judges the consumer crate fresh when its sources
+/// are older than the last output, whatever directory they sit in. A
+/// clone made before another test's build would then run that test's
+/// binary. Taking this hold before cloning keeps every source tree newer
+/// than every output a different test wrote.
+pub struct DemoBuild {
+    _lock: std::fs::File,
+}
+
+impl DemoBuild {
+    /// Wait for the shared demo build directory and hold it.
+    ///
+    /// Call this before [`DemoRepo::checkout`], and keep the value alive
+    /// until the test's last cargo build finishes.
+    pub fn acquire() -> DemoBuild {
+        let path = demo_lock_path();
+        let scratch = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        std::fs::create_dir_all(scratch)
+            .unwrap_or_else(|error| panic!("step create {} failed: {error}", scratch.display()));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .unwrap_or_else(|error| panic!("step open {} failed: {error}", path.display()));
+        file.lock()
+            .unwrap_or_else(|error| panic!("step lock {} failed: {error}", path.display()));
+        DemoBuild { _lock: file }
+    }
+}
+
 /// Resolved location of the demo consumer repository.
 pub struct DemoRepo {
     source: String,
@@ -97,6 +163,8 @@ impl DemoRepo {
     /// reviewed commit. Baseline and patched commits therefore resolve
     /// exactly like they would in the source checkout. The source itself
     /// is never written.
+    ///
+    /// A test that builds the copy takes [`DemoBuild::acquire`] first.
     pub fn checkout(&self) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("hold the consumer copy");
         let target = dir.path().join("consumer");

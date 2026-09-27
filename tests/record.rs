@@ -1239,7 +1239,7 @@ fn verify_random_picker() {
 }
 "#;
 
-/// Build a `sethu` invocation with an isolated cargo target directory.
+/// Build a `sethu` invocation with the shared demo build directory.
 fn e2e_sethu(target: &Path) -> Command {
     let mut cmd = Command::cargo_bin("sethu").unwrap();
     cmd.env("CARGO_TARGET_DIR", target);
@@ -1263,13 +1263,14 @@ fn demo_matrix_run_records_random_search_repairs() {
     if !need_vimanam("demo_matrix_run_records_random_search_repairs") {
         return;
     }
+    let _build = common::DemoBuild::acquire();
     let _clone = demo.checkout();
     let repo = _clone.path().join("consumer").canonicalize().unwrap();
     let old = fixture("immich/old.json");
     let new = fixture("immich/new.json");
 
-    let target = tempfile::tempdir().unwrap();
-    e2e_sethu(target.path())
+    let target = common::demo_target_dir();
+    e2e_sethu(&target)
         .current_dir(&repo)
         .arg("init")
         .arg(&old)
@@ -1397,14 +1398,14 @@ fn demo_matrix_run_records_random_search_repairs() {
     )
     .unwrap();
 
-    e2e_sethu(target.path())
+    e2e_sethu(&target)
         .args(["verify", "--freeze", "--manifest"])
         .arg(&manifest_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("frozen"));
 
-    e2e_sethu(target.path())
+    e2e_sethu(&target)
         .args(["verify", "--manifest"])
         .arg(&manifest_path)
         .assert()

@@ -7,12 +7,11 @@
 //! run uses real stub instances on loopback and fixture scenarios
 //! validated against the pinned specs. Nothing writes to the source
 //! demo checkout. Tests that clone it skip with a named reason when
-//! `SETHU_DEMO_REPO` is unset, and fail instead under CI. Each heavy test builds under its own
-//! scratch root behind one lock, so repeated cargo builds within a
-//! test reuse compiled dependencies.
+//! `SETHU_DEMO_REPO` is unset, and fail instead under CI. Every test
+//! that builds the demo consumer holds one shared build directory in
+//! turn, so its dependencies compile once across the whole run.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -25,16 +24,12 @@ const OLD_SHA: &str = "ff2d4e2a7c35cbcf0ef0b8ca50158bf7711bc200a80f4cdcf0a512084
 /// Full hash of the pinned new spec, matching the checked in fixture.
 const NEW_SHA: &str = "a5c98c5cf35f9b42a412a3aaee7c1e1f597279cc7c8a88cc090d7a7e21aedd26";
 
-/// Lock that serialises the heavy cargo-building tests.
-static HEAVY: Mutex<()> = Mutex::new(());
-
 /// Build the test command for the sethu binary with a target dir.
 ///
-/// Callers pass a fixed path under their own scratch root. Each scratch
-/// root is a fresh unique directory, so concurrent runs never share build
-/// outputs. The scratch guard drops at the end of the test and removes
-/// the builds with it, so no target dir survives the run. Every stage of
-/// one test reuses the same path, so repeated cargo builds stay cheap.
+/// Tests that build the demo consumer pass the shared demo build
+/// directory they hold, so every stage reuses compiled dependencies.
+/// Tests that refuse before any stage pass a scratch path and check that
+/// no build ever created it.
 fn sethu(target: &Path) -> Command {
     let mut cmd = Command::cargo_bin("sethu").unwrap();
     cmd.env("CARGO_TARGET_DIR", target);
@@ -407,7 +402,7 @@ fn regression_goes_green_red_green_with_guards() {
     let Some(demo) = common::demo_repo("regression_goes_green_red_green_with_guards") else {
         return;
     };
-    let _guard = HEAVY.lock().unwrap();
+    let _build = common::DemoBuild::acquire();
     let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
@@ -419,7 +414,7 @@ fn regression_goes_green_red_green_with_guards() {
         "give random search its own array path",
     );
     let area = tempfile::tempdir().unwrap();
-    let target = area.path().join("target");
+    let target = common::demo_target_dir();
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &patched);
 
@@ -496,7 +491,7 @@ fn naive_shared_parser_patch_fails_a_guard() {
     let Some(demo) = common::demo_repo("naive_shared_parser_patch_fails_a_guard") else {
         return;
     };
-    let _guard = HEAVY.lock().unwrap();
+    let _build = common::DemoBuild::acquire();
     let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
@@ -508,7 +503,7 @@ fn naive_shared_parser_patch_fails_a_guard() {
         "parse every search as an array",
     );
     let area = tempfile::tempdir().unwrap();
-    let target = area.path().join("target");
+    let target = common::demo_target_dir();
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &patched);
 
@@ -555,7 +550,7 @@ fn freeze_detects_harness_change_and_supersedes() {
     let Some(demo) = common::demo_repo("freeze_detects_harness_change_and_supersedes") else {
         return;
     };
-    let _guard = HEAVY.lock().unwrap();
+    let _build = common::DemoBuild::acquire();
     let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
@@ -567,7 +562,7 @@ fn freeze_detects_harness_change_and_supersedes() {
         "give random search its own array path",
     );
     let area = tempfile::tempdir().unwrap();
-    let target = area.path().join("target");
+    let target = common::demo_target_dir();
     write_harness(area.path());
     let manifest = write_manifest(area.path(), &repo, &baseline, &patched);
 
@@ -639,6 +634,7 @@ fn dirty_tree_refuses_verify() {
         !area.path().join("runs").exists(),
         "a refused run must leave no artefacts"
     );
+    assert!(!target.exists(), "a refused run must start no build");
 }
 
 #[test]
@@ -646,7 +642,7 @@ fn stopped_stub_yields_invalid_red() {
     let Some(demo) = common::demo_repo("stopped_stub_yields_invalid_red") else {
         return;
     };
-    let _guard = HEAVY.lock().unwrap();
+    let _build = common::DemoBuild::acquire();
     let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
@@ -678,7 +674,7 @@ fn stopped_stub_yields_invalid_red() {
         .current_dir(&worktree)
         .env("IMMICH_BASE_URL", format!("http://127.0.0.1:{dead_port}"))
         .env("CARGO_NET_OFFLINE", "true")
-        .env("CARGO_TARGET_DIR", area.path().join("target"))
+        .env("CARGO_TARGET_DIR", common::demo_target_dir())
         .output()
         .unwrap();
     assert!(!output.status.success(), "the dead stub must fail the test");
@@ -756,16 +752,19 @@ fn unknown_check_name_fails_with_known_names() {
         .failure()
         .stderr(predicate::str::contains("ghost"))
         .stderr(predicate::str::contains("random-picker"));
+    assert!(!target.exists(), "a refused run must start no build");
 }
 
 #[test]
 fn missing_manifest_flag_is_a_usage_error() {
-    let target = tempfile::tempdir().unwrap();
-    sethu(target.path())
+    let area = tempfile::tempdir().unwrap();
+    let target = area.path().join("target");
+    sethu(&target)
         .args(["verify"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("--manifest"));
+    assert!(!target.exists(), "a usage error must start no build");
 }
 
 #[test]
@@ -794,6 +793,7 @@ fn wrong_spec_identity_refuses_before_stages() {
         !area.path().join("runs").exists(),
         "a refused run must leave no artefacts"
     );
+    assert!(!target.exists(), "a refused run must start no build");
 }
 
 #[test]
@@ -802,7 +802,7 @@ fn relative_manifest_path_verifies_without_consumer_litter() {
     else {
         return;
     };
-    let _guard = HEAVY.lock().unwrap();
+    let _build = common::DemoBuild::acquire();
     let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
@@ -814,7 +814,7 @@ fn relative_manifest_path_verifies_without_consumer_litter() {
         "give random search its own array path",
     );
     let area = tempfile::tempdir().unwrap();
-    let target = area.path().join("target");
+    let target = common::demo_target_dir();
     write_harness(area.path());
     write_manifest(area.path(), &repo, &baseline, &patched);
 
@@ -852,4 +852,18 @@ fn relative_manifest_path_verifies_without_consumer_litter() {
         .filter(|line| line.starts_with("worktree "))
         .count();
     assert_eq!(trees, 1, "no stage worktree may linger: {list}");
+}
+
+#[test]
+fn demo_build_hold_excludes_a_second_holder() {
+    let build = common::DemoBuild::acquire();
+    let other = std::fs::OpenOptions::new()
+        .write(true)
+        .open(common::demo_lock_path())
+        .unwrap();
+    assert!(
+        matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+        "a second holder must wait while the shared demo build is held"
+    );
+    drop(build);
 }
