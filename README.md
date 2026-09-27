@@ -26,9 +26,22 @@ Run `sethu <command> --help` for flags. Run `sethu capabilities` to confirm the 
 
 ## Installation
 
-Sethu requires Vimanam 1.3.0 or later on PATH. Verification runs also need cargo-nextest. Install both tools separately.
+Install the published CLI from crates.io with Rust 1.96 or later.
 
-Until the first Sethu release appears, build it from source with Rust 1.96 or later.
+```bash
+cargo install sethu --locked
+```
+
+Sethu requires Vimanam 1.3.0 or later on PATH. Verification runs also need cargo-nextest. Install both helpers separately.
+
+```bash
+cargo install vimanam
+cargo install cargo-nextest
+```
+
+The [v0.1.0 GitHub release](https://github.com/noemaforge/sethu/releases/tag/v0.1.0) provides Linux, macOS, and Windows binary archives with SHA-256 checksums. Each Sethu binary includes the Bob pack. The archives do not include Vimanam or cargo-nextest.
+
+To build from source, clone the repository and run `cargo build --release`.
 
 ```bash
 git clone https://github.com/noemaforge/sethu
@@ -36,14 +49,7 @@ cd sethu
 cargo build --release
 ```
 
-The binary lands at `target/release/sethu`. Copy it onto PATH. Install the helpers from crates.io.
-
-```bash
-cargo install vimanam
-cargo install cargo-nextest
-```
-
-After publication, install Sethu with `cargo install sethu --locked`. Versioned GitHub Releases will also provide Linux, macOS, and Windows binary archives with SHA-256 checksums. The binary archives include the Bob pack. They do not include Vimanam or cargo-nextest.
+The binary lands at `target/release/sethu`. Copy it onto PATH.
 
 ## Workflow
 
