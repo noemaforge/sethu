@@ -64,16 +64,25 @@ jobs:
         run: |
           cargo install --root "$TOOLS_ROOT" vimanam --version "=$VIMANAM_VERSION" --locked
           cargo install --root "$TOOLS_ROOT" cargo-nextest --version "=$NEXTEST_VERSION" --locked
-      # A restored cache must hold exactly the pinned versions, and the gate
-      # script falls back to cargo test when nextest is missing, so both
-      # binaries are checked here before any test runs.
+      # A restored cache must hold exactly the pinned versions. The gate
+      # script also falls back to cargo test when nextest is missing. This
+      # step therefore checks both tools before any test runs.
+      # The gate script puts the cargo home's bin ahead of this step's PATH
+      # entry. The check rebuilds that same PATH, so it measures the
+      # binaries the gate will actually resolve.
       - name: Check the installed tools
         env:
           TOOLS_ROOT: ${{ steps.keys.outputs.tools-root }}
         run: |
           echo "$TOOLS_ROOT/bin" >> "$GITHUB_PATH"
-          vimanam=$("$TOOLS_ROOT/bin/vimanam" --version)
-          nextest=$("$TOOLS_ROOT/bin/cargo-nextest" nextest --version)
+          export PATH="$HOME/.cargo/bin:$TOOLS_ROOT/bin:$PATH"
+          for tool in vimanam cargo-nextest; do
+            found=$(command -v "$tool" || true)
+            echo "$tool resolves to ${found:-nothing}"
+            test "$found" = "$TOOLS_ROOT/bin/$tool"
+          done
+          vimanam=$(vimanam --version)
+          nextest=$(cargo nextest --version)
           echo "$vimanam"
           echo "$nextest"
           test "$vimanam" = "vimanam $VIMANAM_VERSION"
