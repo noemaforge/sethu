@@ -463,41 +463,80 @@ fn build_row(loaded: &Loaded, evaluation: &Evaluation, repo: &Path, id: &str) ->
 
 /// Link one stored run reference to the discovered runs.
 ///
-/// Matching strips the `run:` prefix and accepts a unique prefix of a
-/// stored run id, mirroring the lookup the state helpers use. No match
-/// marks the reference missing. A matched run with a changed harness
-/// marks the link superseded.
+/// Matching resolves the run id and check name independently. Run ids may
+/// use a unique prefix. A missing or ambiguous run or check stays unlinked.
+/// A matched run with a changed harness remains marked superseded.
 fn link_run(reference: &str, runs: &[DiscoveredRun]) -> RunLink {
-    let wanted = reference.strip_prefix("run:").unwrap_or(reference);
-    let mut hits = runs.iter().filter(|run| run.run_id.starts_with(wanted));
+    let (wanted, named_check) = match crate::check::parse_run_reference(reference) {
+        Ok(parsed) => (parsed.run_id, Some(parsed.check)),
+        Err(_) => match reference.strip_prefix("run:") {
+            Some(wanted) if !wanted.is_empty() && !wanted.contains('/') => {
+                (wanted.to_string(), None)
+            }
+            _ => return missing_run_link(reference),
+        },
+    };
+    let mut hits = runs.iter().filter(|run| run.run_id.starts_with(&wanted));
     let first = hits.next();
     let ambiguous = hits.next().is_some();
     match first {
         Some(run) if !ambiguous => RunLink {
             reference: reference.to_string(),
             run_id: Some(run.run_id.clone()),
-            verified: Some(run.checks.iter().all(|check| check.verified)),
-            stages: run
-                .checks
-                .iter()
-                .flat_map(|check| {
+            verified: named_check
+                .as_ref()
+                .and_then(|name| {
+                    let mut checks = run.checks.iter().filter(|check| check.name == *name);
+                    let check = checks.next()?;
+                    checks.next().is_none().then_some(check.verified)
+                })
+                .or_else(|| {
+                    named_check
+                        .is_none()
+                        .then(|| run.checks.iter().all(|check| check.verified))
+                }),
+            stages: match named_check.as_ref() {
+                Some(name) => {
+                    let mut checks = run.checks.iter().filter(|check| check.name == *name);
+                    let check = checks.next();
+                    if checks.next().is_some() {
+                        return missing_run_link(reference);
+                    }
+                    let Some(check) = check else {
+                        return missing_run_link(reference);
+                    };
                     check
                         .stages
                         .iter()
                         .map(|stage| format!("{} {}: {}", check.name, stage.stage, stage.verdict))
-                })
-                .collect(),
+                        .collect()
+                }
+                None => run
+                    .checks
+                    .iter()
+                    .flat_map(|check| {
+                        check.stages.iter().map(|stage| {
+                            format!("{} {}: {}", check.name, stage.stage, stage.verdict)
+                        })
+                    })
+                    .collect(),
+            },
             missing: false,
             superseded: run.harness_changed,
         },
-        _ => RunLink {
-            reference: reference.to_string(),
-            run_id: None,
-            verified: None,
-            stages: Vec::new(),
-            missing: true,
-            superseded: false,
-        },
+        _ => missing_run_link(reference),
+    }
+}
+
+/// Keep unresolved references visible without attributing another run or check.
+fn missing_run_link(reference: &str) -> RunLink {
+    RunLink {
+        reference: reference.to_string(),
+        run_id: None,
+        verified: None,
+        stages: Vec::new(),
+        missing: true,
+        superseded: false,
     }
 }
 
@@ -778,5 +817,94 @@ fn unsupported_word(kind: &crate::stub::schema::UnsupportedKind) -> String {
         crate::stub::schema::UnsupportedKind::ExternalRef => "external_ref".to_string(),
         crate::stub::schema::UnsupportedKind::Format => "format".to_string(),
         crate::stub::schema::UnsupportedKind::Xml => "xml".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::runs::{DiscoveredCheck, DiscoveredRun, StageInfo};
+
+    fn stage(check: &str, stage: &str, verdict: &str) -> StageInfo {
+        StageInfo {
+            check: check.to_string(),
+            stage: stage.to_string(),
+            verdict: verdict.to_string(),
+            detail: String::new(),
+            parser: "nextest-junit".to_string(),
+            trace_entries: 1,
+        }
+    }
+
+    fn check(name: &str, verified: bool, stages: Vec<StageInfo>) -> DiscoveredCheck {
+        DiscoveredCheck {
+            name: name.to_string(),
+            role: "regression".to_string(),
+            change_ids: vec!["vc1_example".to_string()],
+            verified,
+            stages,
+        }
+    }
+
+    fn run(run_id: &str, harness_changed: bool) -> DiscoveredRun {
+        DiscoveredRun {
+            run_id: run_id.to_string(),
+            relative_dir: format!("runs/{run_id}"),
+            harness_hash: "abc".to_string(),
+            harness_changed,
+            sethu_version: "0.1.0".to_string(),
+            nextest_version: "nextest".to_string(),
+            checks: vec![
+                check(
+                    "picker",
+                    true,
+                    vec![stage("picker", "original-old", "pass")],
+                ),
+                check(
+                    "unrelated",
+                    false,
+                    vec![stage("unrelated", "original-new", "invalid_red")],
+                ),
+            ],
+        }
+    }
+
+    #[test]
+    fn named_run_reference_links_only_the_named_check() {
+        let runs = vec![run("run-123", true)];
+
+        let link = link_run("run:run-123/picker", &runs);
+
+        assert_eq!(link.run_id.as_deref(), Some("run-123"));
+        assert_eq!(link.verified, Some(true));
+        assert_eq!(link.stages, vec!["picker original-old: pass"]);
+        assert!(!link.missing);
+        assert!(link.superseded);
+    }
+
+    #[test]
+    fn absent_named_check_and_ambiguous_run_prefix_do_not_link() {
+        let runs = vec![run("run-123", false), run("run-1234", false)];
+
+        for reference in [
+            "run:run-1234/absent",
+            "run:run-12/picker",
+            "run:run-123/picker",
+        ] {
+            let link = link_run(reference, &runs);
+            assert!(link.missing, "{reference} must not link ambiguously");
+            assert_eq!(link.run_id, None);
+            assert!(link.stages.is_empty());
+        }
+
+        let mut duplicate_check = run("solo", false);
+        duplicate_check.checks.push(check(
+            "picker",
+            true,
+            vec![stage("picker", "patched-new", "pass")],
+        ));
+        let link = link_run("run:solo/picker", &[duplicate_check]);
+        assert!(link.missing);
+        assert_eq!(link.run_id, None);
     }
 }
