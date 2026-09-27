@@ -5,10 +5,11 @@
 //! red, green, both guards pass in every stage, a naive shared-parser
 //! patch fails a guard, and a dead stub yields an invalid red. Every
 //! run uses real stub instances on loopback and fixture scenarios
-//! validated against the pinned specs. Nothing writes to the live
-//! demo checkout. Each heavy test builds under its own scratch root
-//! behind one lock, so repeated cargo builds within a test reuse
-//! compiled dependencies.
+//! validated against the pinned specs. Nothing writes to the source
+//! demo checkout. Tests that clone it skip with a named reason when
+//! `SETHU_DEMO_REPO` is unset. Each heavy test builds under its own
+//! scratch root behind one lock, so repeated cargo builds within a
+//! test reuse compiled dependencies.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -17,8 +18,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::{Value, json};
 
-/// Live demo consumer checkout the tests clone but never modify.
-const DEMO_REPO: &str = "/home/nryn/work/sethu-demo-picker";
+mod common;
 
 /// Full hash of the pinned old spec, matching the checked in fixture.
 const OLD_SHA: &str = "ff2d4e2a7c35cbcf0ef0b8ca50158bf7711bc200a80f4cdcf0a51208403631c5";
@@ -54,31 +54,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap()
-}
-
-/// Clone the demo consumer into a scratch directory.
-///
-/// The clone carries the full history, so baseline and patched
-/// commits resolve exactly like they would in the live checkout.
-fn clone_demo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    let target = dir.path().join("consumer");
-    let output = std::process::Command::new("git")
-        .arg("clone")
-        .arg("-q")
-        .arg(DEMO_REPO)
-        .arg(&target)
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "clone failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    git(&target, &["config", "user.email", "test@example.com"]);
-    git(&target, &["config", "user.name", "Test"]);
-    dir
 }
 
 /// Replace one source block exactly once, commit, and return the commit.
@@ -429,8 +404,11 @@ fn stage_record(run_dir: &Path, check: &str, stage: &str) -> Value {
 
 #[test]
 fn regression_goes_green_red_green_with_guards() {
+    let Some(demo) = common::demo_repo("regression_goes_green_red_green_with_guards") else {
+        return;
+    };
     let _guard = HEAVY.lock().unwrap();
-    let _clone = clone_demo();
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let patched = commit_edit(
@@ -515,8 +493,11 @@ fn regression_goes_green_red_green_with_guards() {
 
 #[test]
 fn naive_shared_parser_patch_fails_a_guard() {
+    let Some(demo) = common::demo_repo("naive_shared_parser_patch_fails_a_guard") else {
+        return;
+    };
     let _guard = HEAVY.lock().unwrap();
-    let _clone = clone_demo();
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let patched = commit_edit(
@@ -571,8 +552,11 @@ fn naive_shared_parser_patch_fails_a_guard() {
 
 #[test]
 fn freeze_detects_harness_change_and_supersedes() {
+    let Some(demo) = common::demo_repo("freeze_detects_harness_change_and_supersedes") else {
+        return;
+    };
     let _guard = HEAVY.lock().unwrap();
-    let _clone = clone_demo();
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let patched = commit_edit(
@@ -632,7 +616,10 @@ fn freeze_detects_harness_change_and_supersedes() {
 
 #[test]
 fn dirty_tree_refuses_verify() {
-    let _clone = clone_demo();
+    let Some(demo) = common::demo_repo("dirty_tree_refuses_verify") else {
+        return;
+    };
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let area = tempfile::tempdir().unwrap();
@@ -656,8 +643,11 @@ fn dirty_tree_refuses_verify() {
 
 #[test]
 fn stopped_stub_yields_invalid_red() {
+    let Some(demo) = common::demo_repo("stopped_stub_yields_invalid_red") else {
+        return;
+    };
     let _guard = HEAVY.lock().unwrap();
-    let _clone = clone_demo();
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let area = tempfile::tempdir().unwrap();
@@ -780,7 +770,10 @@ fn missing_manifest_flag_is_a_usage_error() {
 
 #[test]
 fn wrong_spec_identity_refuses_before_stages() {
-    let _clone = clone_demo();
+    let Some(demo) = common::demo_repo("wrong_spec_identity_refuses_before_stages") else {
+        return;
+    };
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let area = tempfile::tempdir().unwrap();
@@ -805,8 +798,12 @@ fn wrong_spec_identity_refuses_before_stages() {
 
 #[test]
 fn relative_manifest_path_verifies_without_consumer_litter() {
+    let Some(demo) = common::demo_repo("relative_manifest_path_verifies_without_consumer_litter")
+    else {
+        return;
+    };
     let _guard = HEAVY.lock().unwrap();
-    let _clone = clone_demo();
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer");
     let baseline = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
     let patched = commit_edit(

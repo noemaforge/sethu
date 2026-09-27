@@ -21,7 +21,7 @@ else
     cargo test
 fi
 
-echo "==> Step 4: plan-reference scan"
+echo "==> Step 4: plan-reference and local-path scan"
 FAIL=0
 TRACKED=$(git ls-files 2>/dev/null || true)
 
@@ -29,7 +29,7 @@ for f in $TRACKED; do
     # Three files name the banned shapes for a legitimate reason, so the
     # loop leaves them out. This script holds the shapes as search text.
     # The ignore list holds one as a path rule. The protocol file states
-    # the rule itself.
+    # the rule itself and names the maintainer's own checkout paths.
     if [ "$f" = tools/check.sh ] || [ "$f" = .gitignore ] || [ "$f" = AGENTS.md ]; then
         continue
     fi
@@ -57,10 +57,15 @@ for f in $TRACKED; do
         echo "FAIL: plan reference (review round) in $f" >&2
         FAIL=1
     fi
+    # Machine-local home paths, which exist on no other machine
+    if grep -nF '/home/' "$f"; then
+        echo "FAIL: machine-local path (/home/) in $f" >&2
+        FAIL=1
+    fi
 done
 
 if [ "$FAIL" -eq 1 ]; then
-    echo "Step 4 FAILED: plan references found in tracked source" >&2
+    echo "Step 4 FAILED: plan references or machine-local paths found in tracked source" >&2
     exit 1
 fi
 

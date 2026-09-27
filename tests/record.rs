@@ -3,7 +3,8 @@
 //! Tests build a scratch consumer repository per case through `sethu
 //! init` on the pinned specs, then drive `record` with the working
 //! directory set to that repository. Live tests need the released diff
-//! binary on PATH and skip with a named reason without it. Refusals
+//! binary on PATH and skip with a named reason without it. The demo
+//! matrix test also skips when `SETHU_DEMO_REPO` is unset. Refusals
 //! must change nothing, so failing cases assert that no ledger file
 //! was written. Tests never touch the real home directory.
 
@@ -15,6 +16,8 @@ use serde_json::{Value, json};
 use sethu::state::attempt::AttemptRecord;
 use sethu::state::layout;
 use sethu::state::ledger::{Ledger, Outcome};
+
+mod common;
 
 /// Locate a checked in fixture by path under the crate root.
 fn fixture(name: &str) -> PathBuf {
@@ -1138,9 +1141,6 @@ fn several_attempts_refuse_without_a_choice() {
     .stdout(predicate::str::is_empty());
 }
 
-/// Live demo consumer checkout the end-to-end test clones but never modifies.
-const DEMO_REPO: &str = "/home/nryn/work/sethu-demo-picker";
-
 /// Run one git command in a directory and keep stdout on success.
 fn demo_git(dir: &Path, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
@@ -1154,31 +1154,6 @@ fn demo_git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap()
-}
-
-/// Clone the demo consumer into a scratch directory.
-///
-/// The clone carries the full history, so baseline and patched commits
-/// resolve exactly like they would in the live checkout.
-fn clone_demo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    let target = dir.path().join("consumer");
-    let output = std::process::Command::new("git")
-        .arg("clone")
-        .arg("-q")
-        .arg(DEMO_REPO)
-        .arg(&target)
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "clone failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    demo_git(&target, &["config", "user.email", "test@example.com"]);
-    demo_git(&target, &["config", "user.name", "Test"]);
-    dir
 }
 
 /// Replace one source block exactly once, commit, and return the commit.
@@ -1279,10 +1254,13 @@ fn random_ids(changes: &[sethu::vimanam::ChangeRecord]) -> Vec<String> {
 
 #[test]
 fn demo_matrix_run_records_random_search_repairs() {
+    let Some(demo) = common::demo_repo("demo_matrix_run_records_random_search_repairs") else {
+        return;
+    };
     if !need_vimanam("demo_matrix_run_records_random_search_repairs") {
         return;
     }
-    let _clone = clone_demo();
+    let _clone = demo.checkout();
     let repo = _clone.path().join("consumer").canonicalize().unwrap();
     let old = fixture("immich/old.json");
     let new = fixture("immich/new.json");

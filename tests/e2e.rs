@@ -6,9 +6,10 @@
 //! group, tracer style records, harness freeze, the checked in correct
 //! repair to a green verification, a default masking probe, the naive
 //! repair to a failed guard, and finally the blocked check and the
-//! report. The live demo checkout is never modified. The test needs
-//! the released diff binary on PATH and skips with a named reason
-//! without it. One consumer copy serves the whole script.
+//! report. The source demo checkout is never modified. The test needs
+//! the released diff binary on PATH and the demo consumer named by
+//! `SETHU_DEMO_REPO`. It skips with a named reason without either.
+//! One consumer copy serves the whole script.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -16,8 +17,7 @@ use std::sync::{Mutex, OnceLock};
 use assert_cmd::Command;
 use serde_json::{Value, json};
 
-/// Live demo consumer checkout the test clones but never modifies.
-const DEMO_REPO: &str = "/home/nryn/work/sethu-demo-picker";
+mod common;
 
 /// Name of the single scripted workflow test, used in skip messages.
 const TEST_NAME: &str = "full_workflow_without_assistance";
@@ -109,32 +109,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).expect("read git stdout as text")
-}
-
-/// Clone the demo consumer into a scratch directory.
-///
-/// The clone carries the full history, so baseline and patched commits
-/// resolve exactly like they would in the live checkout. The live
-/// checkout itself is never written.
-fn clone_demo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("hold the consumer copy");
-    let target = dir.path().join("consumer");
-    let output = std::process::Command::new("git")
-        .arg("clone")
-        .arg("-q")
-        .arg(DEMO_REPO)
-        .arg(&target)
-        .current_dir(dir.path())
-        .output()
-        .unwrap_or_else(|error| panic!("step clone the demo consumer cannot start: {error}"));
-    assert!(
-        output.status.success(),
-        "step clone the demo consumer failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    git(&target, &["config", "user.email", "test@example.com"]);
-    git(&target, &["config", "user.name", "Test"]);
-    dir
 }
 
 /// Run one workflow step that must succeed and return its streams.
@@ -655,6 +629,9 @@ fn shared_target_cleanup_removes_its_directory() {
 
 #[test]
 fn full_workflow_without_assistance() {
+    let Some(demo) = common::demo_repo(TEST_NAME) else {
+        return;
+    };
     if !vimanam_available() {
         eprintln!("SKIP {TEST_NAME}: `vimanam` is not on PATH");
         return;
@@ -662,7 +639,7 @@ fn full_workflow_without_assistance() {
     let _guard = HEAVY.lock().expect("hold the workflow lock");
     let _target = hold_shared_target_dir();
 
-    let holder = clone_demo();
+    let holder = demo.checkout();
     let repo = holder
         .path()
         .join("consumer")

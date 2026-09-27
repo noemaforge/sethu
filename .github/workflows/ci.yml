@@ -18,4 +18,6 @@ jobs:
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --locked
       - name: Run the gate
+        env:
+          SETHU_DEMO_REPO: https://github.com/noemaforge/sethu-demo-picker
         run: bash tools/check.sh
