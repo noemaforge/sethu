@@ -17,6 +17,10 @@ Sethu refuses to close a change without evidence. Every ledger entry points at a
 
 **Readiness.** The question of whether every change stands resolved, with no open decision and no stale run. Example: one `decision_required` paging item means accounting passes while readiness fails.
 
+**Red stage.** The pre-repair verification run that must fail with the expected message. Example: the random picker check fails against new fixtures before the repair.
+
+**Patched stage.** The post-repair verification run that must pass with matching trace. Example: the random check passes after random search gains its own path.
+
 ## Steps
 
 1. Install the pack, then capture the pair:

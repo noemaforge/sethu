@@ -15,6 +15,8 @@ Steps marked **In Bob IDE** happen inside Bob IDE through `/api-upgrade`. All ot
 
 **Regression check.** A named check that ties one fix to its failing test and its stub traffic. Example: the random picker check fails before the repair and passes after it.
 
+**Patched stage.** The post-repair verification run that must pass with matching trace. Example: the random check passes after random search gains its own path.
+
 ## Inputs
 
 The old spec is Immich v1.116.2 and the new spec is Immich v1.117.0. Both are OpenAPI 3.0.0 documents. Unmodified copies live under `tests/fixtures/immich/`, with release commits and hashes in the NOTICE beside them. The Vimanam capture of the pair reports 27 required changes across 4 operations.
@@ -43,15 +45,24 @@ The picker offers a next page of random assets, so pagination matters to it. The
 
 ## Command sequence
 
-Run these from a checkout of the demo consumer, with the pinned specs beside it:
+Run this sequence from the consumer checkout. Keep the Sethu checkout beside it for fixtures.
+
+Copy the pinned specs into the consumer checkout first:
+
+```bash
+cp /path/to/sethu/tests/fixtures/immich/old.json ./old.json
+cp /path/to/sethu/tests/fixtures/immich/new.json ./new.json
+```
+
+Then run each step from the consumer checkout:
 
 1. Install the pack into the consumer:
    ```bash
-   sethu install ./demo-picker
+   sethu install .
    ```
 2. Capture the contract change:
    ```bash
-   sethu init --repo ./demo-picker old.json new.json
+   sethu init --repo . ./old.json ./new.json
    ```
 3. List the required set:
    ```bash

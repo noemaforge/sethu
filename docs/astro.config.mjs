@@ -1,6 +1,6 @@
 // @ts-check
-import { defineConfig } from "astro/config";
-import starlight from "@astrojs/starlight";
+import { defineConfig } from "astro/config"
+import starlight from "@astrojs/starlight"
 
 // The site deploys to GitHub Pages at https://noemaforge.github.io/sethu/.
 // `base` matches the repository name so assets resolve under that path.
@@ -47,5 +47,5 @@ export default defineConfig({
         },
       ],
     }),
-  ],
-});
+  ]
+})

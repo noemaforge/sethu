@@ -11,13 +11,15 @@ Sethu builds on Vimanam and never grows its own copy of what Vimanam provides. T
 
 **Capture.** The immutable Vimanam output stored at `init` time. Example: later commands recompute the required set from this file, never from a fresh diff.
 
+**Slug.** A short readable key that names one mode or page. Example: the installer merges owned modes by this key instead of by path.
+
 ## Vimanam contract
 
 Vimanam runs as a separate binary through `src/vimanam.rs` and nothing else. Sethu reads full stdout and treats exit 3 as output, because Vimanam exits 3 under `--fail-on-breaking` after writing the full report.
 
 Vimanam records stay stored unchanged. Sethu never recomputes a change ID or a severity.
 
-A bug or gap in Vimanam becomes an upstream issue with a version, a smallest reproduction, and expected behavior. Sethu takes a workaround when one exists and records the issue beside it. It never patches Vimanam from here.
+A bug or gap in Vimanam becomes an upstream issue with a version, a smallest reproduction, and expected behavior. Sethu takes a workaround when one exists and records the issue beside it. It never patches Vimanam from here. Find releases and usage on the [Vimanam crates.io page](https://crates.io/crates/vimanam). Read source and issues in the [Vimanam repository](https://github.com/noemaforge/vimanam).
 
 ## Unsupported cases
 

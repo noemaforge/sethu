@@ -11,6 +11,10 @@ All examples below match the shipped binary. Run `sethu <command> --help` to con
 
 **Scope.** The `--scope` flag on `init` that restricts investigation to listed paths. Example: `--scope src/search.rs` keeps tracing inside that file.
 
+**Slug.** A short readable key that names one mode or page. Example: the installer merges owned modes by this key instead of by path.
+
+**Fan-out.** One shared component reaching several operations at once. Example: the old response component serves random, smart, and metadata search together.
+
 ## Install and capture
 
 ### `install`
@@ -25,7 +29,7 @@ sethu install ./consumer
 |---|---|
 | `--attempt <ID>` | Select a migration attempt by ID or unique prefix |
 
-It creates the `/api-upgrade` command, the skill with its references, and the migrator mode under `.bob/`. It merges owned modes by slug, records owned file hashes in `.sethu/installation.json`, adds `.sethu/` to `.git/info/exclude`, and writes a nextest profile into `.config/nextest.toml`. It never overwrites a user-edited owned file silently.
+It creates the `/api-upgrade` command, the skill with its references, and the migrator mode under `.bob/`. It merges owned modes by slug, records owned file hashes in `.sethu/installation.json`, adds `.sethu/` to `.git/info/exclude`, and writes a nextest profile into `.config/nextest.toml`. It never overwrites a user-edited owned file silently. See step 1 in the [Immich walkthrough](/walkthrough/).
 
 ### `init`
 
@@ -42,7 +46,7 @@ sethu init --repo ./consumer old.json new.json
 | `--scope <PATH>` | Restrict investigation to this path, repeatable |
 | `--list` | List existing attempts for the spec pair instead of initialising |
 
-It runs the pinned Vimanam over the spec pair and stores the output unchanged as an immutable capture. It copies both specs into `.sethu/pairs/`. It binds the attempt to the consumer baseline commit and the declared scope. It resumes an existing attempt only on an exact match.
+It runs the pinned Vimanam over the spec pair and stores the output unchanged as an immutable capture. It copies both specs into `.sethu/pairs/`. It binds the attempt to the consumer baseline commit and the declared scope. It resumes an existing attempt only on an exact match. See step 2 in the [Immich walkthrough](/walkthrough/).
 
 ## Understand
 
@@ -64,7 +68,7 @@ sethu changes --json
 | `--group <N>` | Split output into groups of this size for parallel tracing |
 | `--json` | Emit machine-readable output |
 
-Output lists each required change by ID, method, path, kind, and severity. Records group by shared origin, so one changed component reaching several operations reads as fan-out.
+Output lists each required change by ID, method, path, kind, and severity. Records group by shared origin, so one changed component reaching several operations reads as fan-out. See step 3 in the [Immich walkthrough](/walkthrough/).
 
 ### `context`
 
@@ -82,7 +86,7 @@ sethu context <change-id> --prepare 1
 | `--level <LEVEL>` | `overview`, `endpoint` (default), or `schema` detail |
 | `--prepare <GROUP>` | Write context artifacts for a whole group under `.sethu/` |
 
-It returns the unmodified change record plus readable old and new endpoint detail through exact operation selection. Tracer agents read the prepared artifacts without running commands.
+It returns the unmodified change record plus readable old and new endpoint detail through exact operation selection. Tracer agents read the prepared artifacts without running commands. See step 4 in the [Immich walkthrough](/walkthrough/).
 
 ## Account
 
@@ -103,7 +107,7 @@ sethu record <change-id> --outcome decision_required --evidence docs/choice.md -
 | `--evidence <REF>` | One evidence reference, repeatable |
 | `--note <TEXT>` | Free-text note attached to the record |
 
-Re-recording replaces the current disposition and appends the old one to a per-ID history. A `fixed_and_verified` outcome needs a passing run on the current patched commit.
+Re-recording replaces the current disposition and appends the old one to a per-ID history. A `fixed_and_verified` outcome needs a passing run on the current patched commit. See step 8 in the [Immich walkthrough](/walkthrough/).
 
 ### `check`
 
@@ -121,7 +125,7 @@ sethu check --json
 | `--require-ready` | Fail unless every required change also stands resolved |
 | `--json` | Emit machine-readable output |
 
-It recomputes the required set from the attempt capture and validates the ledger against it. It exits nonzero on an incomplete ledger.
+It recomputes the required set from the attempt capture and validates the ledger against it. It exits nonzero on an incomplete ledger. See step 9 in the [Immich walkthrough](/walkthrough/).
 
 ## Reproduce and verify
 
@@ -141,6 +145,8 @@ sethu stub --version old --port 8080 --scenarios ./scenarios
 | `--port <PORT>` | TCP port to bind to, `0` means any free port |
 | `--scenarios <DIR>` | Directory holding fixture scenarios |
 
+The walkthrough exercises this command through step 7. See the [Immich walkthrough](/walkthrough/).
+
 ### `verify`
 
 Run checks against the stub and record the results.
@@ -158,7 +164,7 @@ sethu verify --check random-new --manifest ./verify-manifest.json
 | `--manifest <PATH>` | Path to the verification manifest |
 | `--check <NAME>` | Run only these named checks, repeatable |
 
-It overlays a frozen test harness onto worktrees of the original and patched commits and runs each named check against its own stub instance. A regression check passes only when the test result and the stub trace agree.
+It overlays a frozen test harness onto worktrees of the original and patched commits and runs each named check against its own stub instance. A regression check passes only when the test result and the stub trace agree. See steps 6 and 7 in the [Immich walkthrough](/walkthrough/).
 
 ## Explain and discover
 
@@ -177,7 +183,7 @@ sethu report --out ./report --format md
 | `--format <FORMAT>` | `md`, `html`, or `both` (default) |
 | `--out <DIR>` | Directory that receives the report |
 
-It covers provenance, tool versions, accounting and readiness, every required change with its evidence, and the remaining blockers.
+It covers provenance, tool versions, accounting and readiness, every required change with its evidence, and the remaining blockers. See step 10 in the [Immich walkthrough](/walkthrough/).
 
 ### `scan`
 
@@ -194,7 +200,7 @@ sethu scan ./spec-repo --spec openapi.json --tags 'v1.*'
 | `--spec <PATH>` | Path to the spec file inside the repository |
 | `--tags <PATTERN>` | Tag pattern to walk, defaults to all tags |
 
-It walks release tags in version order, diffs adjacent spec pairs with Vimanam, and ranks them by demo value. Candidate pairs carry provenance and explicit limits. Ranking stays a heuristic.
+It walks release tags in version order, diffs adjacent spec pairs with Vimanam, and ranks them by demo value. Candidate pairs carry provenance and explicit limits. Ranking stays a heuristic. The walkthrough starts from a pair this command can find. See the [Immich walkthrough](/walkthrough/).
 
 ### `capabilities`
 
@@ -210,4 +216,4 @@ sethu capabilities --json
 | `--attempt <ID>` | Select a migration attempt by ID or unique prefix |
 | `--json` | Emit machine-readable output |
 
-It reports the Sethu and pack versions, the Vimanam, git, and nextest versions found, and the status of every command. The skill consults it before invoking anything.
+It reports the Sethu and pack versions, the Vimanam, git, and nextest versions found, and the status of every command. The skill consults it before invoking anything. Run this check before starting the walkthrough. See the [Immich walkthrough](/walkthrough/).
