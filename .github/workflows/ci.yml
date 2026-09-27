@@ -47,8 +47,10 @@ jobs:
             echo "build-key=$image-rust-$rust-lock-$lock-demo-$commit"
           } >> "$GITHUB_OUTPUT"
       # Installed binaries depend only on the image and their own versions.
-      # They are cached under a root of their own so the cache never holds
-      # the rustup proxies in the cargo home.
+      # Both crates ship a Cargo.lock, and --locked builds against it, so a
+      # cache miss rebuilds the same dependency set. They are cached under a
+      # root of their own so the cache never holds the rustup proxies in the
+      # cargo home.
       - name: Restore Vimanam and cargo-nextest
         id: tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -60,7 +62,7 @@ jobs:
         env:
           TOOLS_ROOT: ${{ steps.keys.outputs.tools-root }}
         run: |
-          cargo install --root "$TOOLS_ROOT" vimanam --version "=$VIMANAM_VERSION"
+          cargo install --root "$TOOLS_ROOT" vimanam --version "=$VIMANAM_VERSION" --locked
           cargo install --root "$TOOLS_ROOT" cargo-nextest --version "=$NEXTEST_VERSION" --locked
       # A restored cache must hold exactly the pinned versions, and the gate
       # script falls back to cargo test when nextest is missing, so both
