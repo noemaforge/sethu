@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Trace OpenAPI changes into your application, repair them, and prove it."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 repository = "https://github.com/noemaforge/sethu"
-exclude = [".worktrees"]
+readme = "README.md"
+include = ["/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE-APACHE", "/src/**", "/pack/**", "/tests/fixtures/immich/NOTICE", "/tests/fixtures/immich/old.json", "/tests/fixtures/immich/new.json"]
 
 [[bin]]
 name = "sethu"

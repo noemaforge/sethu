@@ -1,0 +1,141 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'noemaforge/sethu'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Check version and registry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -1)
+          test -n "$version"
+          test "$TAG" = "v$version"
+          status=$(curl --retry 3 --silent --show-error --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/sethu/$version")
+          test "$status" = 404
+      - name: Install required tools
+        run: |
+          cargo install vimanam --version '=1.3.0' --locked
+          cargo install cargo-nextest --version '=0.9.146' --locked
+      - name: Fetch demo consumer dependencies
+        run: |
+          commit=$(sed -n 's/^pub const DEMO_COMMIT: &str = "\([0-9a-f]*\)";$/\1/p' tests/common/mod.rs)
+          test -n "$commit"
+          git clone -q https://github.com/noemaforge/sethu-demo-picker "$RUNNER_TEMP/demo"
+          git -C "$RUNNER_TEMP/demo" checkout -q "$commit"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/demo/Cargo.toml"
+      - name: Run gate
+        run: bash tools/check.sh
+      - name: Check crate package
+        run: |
+          cargo package --locked --list > "$RUNNER_TEMP/package-files.txt"
+          grep -Fx 'pack/commands/api-upgrade.md' "$RUNNER_TEMP/package-files.txt"
+          grep -Fx 'pack/skills/api-upgrade/SKILL.md' "$RUNNER_TEMP/package-files.txt"
+          grep -Fx 'LICENSE-APACHE' "$RUNNER_TEMP/package-files.txt"
+          grep -Fx 'tests/fixtures/immich/NOTICE' "$RUNNER_TEMP/package-files.txt"
+          grep -Fx 'tests/fixtures/immich/old.json' "$RUNNER_TEMP/package-files.txt"
+          grep -Fx 'tests/fixtures/immich/new.json' "$RUNNER_TEMP/package-files.txt"
+          if grep -E '^(LICENSE-MIT|tests/fixtures/|\.worktrees/)' "$RUNNER_TEMP/package-files.txt" | grep -Ev '^tests/fixtures/immich/(NOTICE|(old|new)\.json)$'; then exit 1; fi
+          cargo publish --dry-run --locked
+
+  build:
+    needs: validate
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            extension: tar.gz
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            extension: tar.gz
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            extension: tar.gz
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            extension: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - name: Build and archive
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXTENSION: ${{ matrix.extension }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cargo build --release --locked --target "$TARGET"
+          mkdir dist
+          archive="sethu-$TAG-$TARGET.$EXTENSION"
+          if [ "$EXTENSION" = zip ]; then
+            cd "target/$TARGET/release"
+            7z a "../../../dist/$archive" sethu.exe
+          else
+            tar -C "target/$TARGET/release" -czf "dist/$archive" sethu
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish-crate:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: stable
+      - name: Publish crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN"
+          cargo publish --locked
+
+  publish-release:
+    needs: [build, publish-crate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Check archive count and write checksums
+        run: |
+          cd dist
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 4
+          sha256sum sethu-* > SHA256SUMS
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG"
