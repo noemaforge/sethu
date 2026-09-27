@@ -64,10 +64,6 @@ pub fn demo_target_dir() -> PathBuf {
 }
 
 /// Lock file that [`DemoBuild`] holds.
-#[allow(
-    dead_code,
-    reason = "only the lock check opens the file directly, so some test crates never call this"
-)]
 pub fn demo_lock_path() -> PathBuf {
     Path::new(env!("CARGO_TARGET_TMPDIR")).join(DEMO_LOCK)
 }
