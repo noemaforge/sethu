@@ -116,6 +116,7 @@ impl StubServer {
     pub fn local_addr(&self) -> SocketAddr {
         match self.server.server_addr() {
             tiny_http::ListenAddr::IP(address) => address,
+            #[cfg(unix)]
             tiny_http::ListenAddr::Unix(_) => loopback_addr(0),
         }
     }
