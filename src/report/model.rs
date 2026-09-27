@@ -50,7 +50,7 @@ pub struct RunLink {
     pub reference: String,
     /// Discovered run id, when a stored run matches the reference.
     pub run_id: Option<String>,
-    /// Whether the matched run verified its checks.
+    /// Whether the matched run verified its cited check.
     pub verified: Option<bool>,
     /// Stage verdicts of the matched run for the citing check.
     pub stages: Vec<String>,
