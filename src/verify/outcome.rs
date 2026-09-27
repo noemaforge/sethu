@@ -578,13 +578,55 @@ fn result_line(line: &str) -> Option<(String, bool)> {
 /// failure. It means the harness cannot run on this commit at all. A
 /// dependency that cargo cannot resolve or fetch stops the build the
 /// same way, before anything compiles.
+///
+/// Cargo and nextest colour their output when `CARGO_TERM_COLOR=always`
+/// reaches them, so escape sequences are removed before any match.
 pub fn looks_like_build_failure(stdout: &str, stderr: &str) -> bool {
-    let combined = format!("{stdout}\n{stderr}");
+    let combined = strip_ansi_escapes(&format!("{stdout}\n{stderr}"));
     combined.contains("could not compile")
         || combined.contains("error: could not compile")
         || combined.contains("error[")
         || (combined.contains("error:") && combined.contains("--> "))
         || looks_like_resolution_failure(&combined)
+}
+
+/// Remove ANSI escape sequences from terminal output.
+///
+/// A control sequence (`ESC [` parameters, then one final byte) carries
+/// colour and style. An operating system command (`ESC ]`) runs to a bell
+/// or to `ESC \\`. Any other escape takes one following character. An
+/// unterminated sequence at the end is dropped.
+fn strip_ansi_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Cargo's own wording when it cannot resolve or fetch a dependency.
@@ -606,7 +648,8 @@ const RESOLUTION_FAILURES: [&str; 5] = [
 /// `Caused by:` chain counts, and only when no test binary started.
 /// Libtest prints `running N tests` and nextest prints `Starting N
 /// tests` once tests begin, and neither can happen after a failed
-/// resolution.
+/// resolution. Both matches rely on the caller having removed colour
+/// escapes, since a coloured line does not start with these prefixes.
 fn looks_like_resolution_failure(output: &str) -> bool {
     let tests_started = output.lines().any(|line| {
         let line = line.trim_start();
@@ -895,6 +938,80 @@ help: if this error is too confusing you may wish to retry without `--offline`
     fn unanchored_cargo_phrase_is_not_a_build_failure() {
         let stderr = "note: failed to download nothing\nwarning: no matching package named `x` in the lockfile comment\n";
         assert!(!looks_like_build_failure("", stderr));
+    }
+
+    #[test]
+    fn coloured_resolution_failure_is_a_build_failure() {
+        let libtest = "\x1b[1m\x1b[91merror\x1b[0m: no matching package named `reqwest` found\nlocation searched: crates.io index\nrequired by package `immich-consumer v0.1.0 (/work/consumer)`\n";
+        assert!(looks_like_build_failure("", libtest));
+        let nextest = "\x1b[1m\x1b[91merror\x1b[0m: no matching package named `reqwest` found\nlocation searched: crates.io index\n\x1b[31;1merror\x1b[0m: command `cargo metadata --format-version 1 --all-features --filter-platform x86_64-unknown-linux-gnu` exited with code 101\n";
+        assert!(looks_like_build_failure("", nextest));
+        let chain = "\x1b[1m\x1b[91merror\x1b[0m: failed to get `nope` as a dependency of package `pathdep v0.1.0 (/work/pathdep)`\n\nCaused by:\n  failed to load source for dependency `nope`\n\nCaused by:\n  unable to update /work/nope\n";
+        assert!(looks_like_build_failure("", chain));
+    }
+
+    #[test]
+    fn coloured_nextest_start_guards_against_cargo_phrases() {
+        let nextest = "\x1b[32;1m    Starting\x1b[0m \x1b[1m1\x1b[0m test across \x1b[1m1\x1b[0m binary\n    error: failed to download the picker page\n";
+        assert!(!looks_like_build_failure("", nextest));
+    }
+
+    #[test]
+    fn escape_sequences_are_removed() {
+        assert_eq!(
+            strip_ansi_escapes(
+                "\x1b[1m\x1b[91merror\x1b[0m: x\x1b]8;;https://a\x07link\x1b]8;;\x1b\\ y\x1bc!\x1b["
+            ),
+            "error: xlink y!"
+        );
+    }
+
+    #[test]
+    fn bare_phrase_outside_an_error_line_is_not_a_build_failure() {
+        assert!(!looks_like_build_failure(
+            "",
+            "failed to download the picker ids\n"
+        ));
+        assert!(!looks_like_build_failure(
+            "",
+            "  failed to download the picker ids\n"
+        ));
+    }
+
+    #[test]
+    fn flush_left_line_after_caused_by_is_not_a_build_failure() {
+        assert!(!looks_like_build_failure(
+            "",
+            "Caused by:\nfailed to download x\n"
+        ));
+    }
+
+    #[test]
+    fn phrase_inside_an_error_line_is_not_a_build_failure() {
+        assert!(!looks_like_build_failure(
+            "",
+            "error: test harness saw no matching package named x\n"
+        ));
+    }
+
+    #[test]
+    fn cause_chain_ends_at_a_flush_left_line() {
+        let stderr = "error: something else\n\nCaused by:\n  unrelated\nsummary line\n  failed to download x\n";
+        assert!(!looks_like_build_failure("", stderr));
+        let stderr = "Caused by:\n  unrelated\nerror: another thing\n  failed to download x\n";
+        assert!(!looks_like_build_failure("", stderr));
+    }
+
+    #[test]
+    fn each_chain_phrase_alone_is_a_build_failure() {
+        assert!(looks_like_build_failure(
+            "",
+            "error: failed to get `nope` as a dependency of package `consumer v0.1.0`\n"
+        ));
+        assert!(looks_like_build_failure(
+            "",
+            "error: unable to resolve the workspace\n\nCaused by:\n  failed to load source for dependency `nope`\n"
+        ));
     }
 
     #[test]
