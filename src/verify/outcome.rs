@@ -583,19 +583,65 @@ fn result_line(line: &str) -> Option<(String, bool)> {
 /// reaches them, so escape sequences are removed before any match.
 pub fn looks_like_build_failure(stdout: &str, stderr: &str) -> bool {
     let combined = strip_ansi_escapes(&format!("{stdout}\n{stderr}"));
-    combined.contains("could not compile")
-        || combined.contains("error: could not compile")
-        || combined.contains("error[")
-        || (combined.contains("error:") && combined.contains("--> "))
-        || looks_like_resolution_failure(&combined)
+    if tests_started(&combined) {
+        return false;
+    }
+    looks_like_compile_failure(&combined) || looks_like_resolution_failure(&combined)
+}
+
+/// Report whether any test binary started running.
+///
+/// Libtest prints `running N tests` and nextest prints `Starting N
+/// tests` once tests begin. Cargo builds every test target before it
+/// runs any, so neither line can follow a failed build or a failed
+/// resolution. Anything that looks like a cargo error after that point
+/// came from a test.
+fn tests_started(output: &str) -> bool {
+    output.lines().any(|line| {
+        let line = line.trim_start();
+        let rest = line
+            .strip_prefix("running ")
+            .or_else(|| line.strip_prefix("Starting "));
+        rest.and_then(|rest| rest.split_whitespace().next())
+            .is_some_and(|count| count.parse::<u64>().is_ok())
+    })
+}
+
+/// Report whether rustc rejected the code.
+///
+/// Three flush-left lines count. `error[E...]` is a coded compiler
+/// error, and `error: could not compile` is cargo's summary of one. An
+/// uncoded `error: ` line counts only when its own source span (`--> `)
+/// is the next non-blank line, as with a syntax error. A warning also
+/// prints a span, and a failing run ends with a bare `error: test
+/// failed`, so neither line alone may decide.
+fn looks_like_compile_failure(output: &str) -> bool {
+    let mut lines = output.lines().filter(|line| !line.trim().is_empty());
+    while let Some(line) = lines.next() {
+        if line.starts_with("error[E") || line.starts_with("error: could not compile ") {
+            return true;
+        }
+        if line.starts_with("error: ")
+            && lines
+                .clone()
+                .next()
+                .is_some_and(|next| next.trim_start().starts_with("--> "))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Remove ANSI escape sequences from terminal output.
 ///
-/// A control sequence (`ESC [` parameters, then one final byte) carries
-/// colour and style. An operating system command (`ESC ]`) runs to a bell
-/// or to `ESC \\`. Any other escape takes one following character. An
-/// unterminated sequence at the end is dropped.
+/// A control sequence (`ESC [`, parameter and intermediate bytes, then
+/// one final byte) carries colour and style. It ends early, without
+/// consuming it, at any character that cannot belong to it, such as a
+/// newline. An operating system command (`ESC ]`) runs to a bell or to
+/// `ESC \`. A character set designator (`ESC (`, `)`, `*` or `+`) takes
+/// one more character. Any other escape takes one following character.
+/// An unterminated sequence at the end is dropped.
 fn strip_ansi_escapes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
@@ -606,8 +652,16 @@ fn strip_ansi_escapes(text: &str) -> String {
         }
         match chars.next() {
             Some('[') => {
-                for c in chars.by_ref() {
-                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                // Parameter and intermediate bytes run 0x20 to 0x3f, and
+                // the final byte runs 0x40 to 0x7e. Anything else ends a
+                // malformed sequence and stays in the output.
+                while let Some(&c) = chars.peek() {
+                    if ('\u{20}'..='\u{3f}').contains(&c) {
+                        chars.next();
+                    } else {
+                        if ('\u{40}'..='\u{7e}').contains(&c) {
+                            chars.next();
+                        }
                         break;
                     }
                 }
@@ -622,6 +676,9 @@ fn strip_ansi_escapes(text: &str) -> String {
                         break;
                     }
                 }
+            }
+            Some('(' | ')' | '*' | '+') => {
+                chars.next();
             }
             _ => {}
         }
@@ -645,23 +702,11 @@ const RESOLUTION_FAILURES: [&str; 5] = [
 ///
 /// A test that prints one of cargo's phrases must not read as a build
 /// failure. Only a line that starts with `error: ` or sits in the
-/// `Caused by:` chain counts, and only when no test binary started.
-/// Libtest prints `running N tests` and nextest prints `Starting N
-/// tests` once tests begin, and neither can happen after a failed
-/// resolution. Both matches rely on the caller having removed colour
-/// escapes, since a coloured line does not start with these prefixes.
+/// `Caused by:` chain counts. The caller has already ruled out output
+/// where tests started. Both matches rely on the caller having removed
+/// colour escapes, since a coloured line does not start with these
+/// prefixes.
 fn looks_like_resolution_failure(output: &str) -> bool {
-    let tests_started = output.lines().any(|line| {
-        let line = line.trim_start();
-        let rest = line
-            .strip_prefix("running ")
-            .or_else(|| line.strip_prefix("Starting "));
-        rest.and_then(|rest| rest.split_whitespace().next())
-            .is_some_and(|count| count.parse::<u64>().is_ok())
-    });
-    if tests_started {
-        return false;
-    }
     let mut in_cause_chain = false;
     for line in output.lines() {
         let trimmed = line.trim_start();
@@ -954,6 +999,333 @@ help: if this error is too confusing you may wish to retry without `--offline`
     fn coloured_nextest_start_guards_against_cargo_phrases() {
         let nextest = "\x1b[32;1m    Starting\x1b[0m \x1b[1m1\x1b[0m test across \x1b[1m1\x1b[0m binary\n    error: failed to download the picker page\n";
         assert!(!looks_like_build_failure("", nextest));
+    }
+
+    /// Real `cargo test` stdout from a crate with one warning and one failing test, uncoloured.
+    const WARN_FAIL_LIBTEST_PLAIN_STDOUT: &str = concat!(
+        "\n",
+        "running 1 test\n",
+        "test tests::red ... FAILED\n",
+        "\n",
+        "failures:\n",
+        "\n",
+        "---- tests::red stdout ----\n",
+        "\n",
+        "thread 'tests::red' (3609506) panicked at src/lib.rs:3:32:\n",
+        "assertion `left == right` failed: random picker ids\n",
+        "  left: 1\n",
+        " right: 2\n",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+        "\n",
+        "\n",
+        "failures:\n",
+        "    tests::red\n",
+        "\n",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+        "\n",
+    );
+    /// Real `cargo test` stderr from the same run.
+    const WARN_FAIL_LIBTEST_PLAIN_STDERR: &str = concat!(
+        "   Compiling warnfail v0.1.0 (/work/warnfail)\n",
+        "warning: unused variable: `unused`\n",
+        " --> src/lib.rs:1:25\n",
+        "  |\n",
+        "1 | pub fn f() -> u32 { let unused = 3; 1 }\n",
+        "  |                         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_unused`\n",
+        "  |\n",
+        "  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n",
+        "\n",
+        "warning: `warnfail` (lib) generated 1 warning (run `cargo fix --lib -p warnfail` to apply 1 suggestion)\n",
+        "warning: `warnfail` (lib test) generated 1 warning (1 duplicate)\n",
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s\n",
+        "     Running unittests src/lib.rs (target/debug/deps/warnfail-8e6f24af83bb4dc1)\n",
+        "error: test failed, to rerun pass `--lib`\n",
+    );
+    /// Real `cargo test` stdout from the same crate under `CARGO_TERM_COLOR=always`.
+    const WARN_FAIL_LIBTEST_COLOUR_STDOUT: &str = concat!(
+        "\n",
+        "running 1 test\n",
+        "test tests::red ... FAILED\n",
+        "\n",
+        "failures:\n",
+        "\n",
+        "---- tests::red stdout ----\n",
+        "\n",
+        "thread 'tests::red' (3609592) panicked at src/lib.rs:3:32:\n",
+        "assertion `left == right` failed: random picker ids\n",
+        "  left: 1\n",
+        " right: 2\n",
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+        "\n",
+        "\n",
+        "failures:\n",
+        "    tests::red\n",
+        "\n",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+        "\n",
+    );
+    /// Real `cargo test` stderr from the coloured run.
+    const WARN_FAIL_LIBTEST_COLOUR_STDERR: &str = concat!(
+        "\x1b[1m\x1b[33mwarning\x1b[0m\x1b[1m: unused variable: `unused`\x1b[0m\n",
+        " \x1b[1m\x1b[94m--> \x1b[0msrc/lib.rs:1:25\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "\x1b[1m\x1b[94m1\x1b[0m \x1b[1m\x1b[94m|\x1b[0m pub fn f() -> u32 { let unused = 3; 1 }\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m                         \x1b[1m\x1b[33m^^^^^^\x1b[0m \x1b[1m\x1b[33mhelp: if this is intentional, prefix it with an underscore: `_unused`\x1b[0m\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "  \x1b[1m\x1b[94m= \x1b[0m\x1b[1mnote\x1b[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n",
+        "\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: `warnfail` (lib) generated 1 warning (run `cargo fix --lib -p warnfail` to apply 1 suggestion)\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: `warnfail` (lib test) generated 1 warning (1 duplicate)\n",
+        "\x1b[1m\x1b[92m    Finished\x1b[0m `test` profile [unoptimized + debuginfo] target(s) in 0.00s\n",
+        "\x1b[1m\x1b[92m     Running\x1b[0m unittests src/lib.rs (target/debug/deps/warnfail-8e6f24af83bb4dc1)\n",
+        "\x1b[1m\x1b[91merror\x1b[0m: test failed, to rerun pass `--lib`\n",
+    );
+    /// Real `cargo nextest run` stderr from the same crate, uncoloured. Stdout was empty.
+    const WARN_FAIL_NEXTEST_PLAIN_STDERR: &str = concat!(
+        "warning: unused variable: `unused`\n",
+        " --> src/lib.rs:1:25\n",
+        "  |\n",
+        "1 | pub fn f() -> u32 { let unused = 3; 1 }\n",
+        "  |                         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_unused`\n",
+        "  |\n",
+        "  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n",
+        "\n",
+        "warning: `warnfail` (lib) generated 1 warning (run `cargo fix --lib -p warnfail` to apply 1 suggestion)\n",
+        "warning: `warnfail` (lib test) generated 1 warning (1 duplicate)\n",
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s\n",
+        "────────────\n",
+        " Nextest run ID 593e9b36-070f-4f3e-9746-e66faa9881c4 with nextest profile: default\n",
+        "    Starting 1 test across 1 binary\n",
+        "        FAIL [   0.004s] (1/1) warnfail tests::red\n",
+        "  stdout ───\n",
+        "\n",
+        "    running 1 test\n",
+        "    test tests::red ... FAILED\n",
+        "\n",
+        "    failures:\n",
+        "\n",
+        "    failures:\n",
+        "        tests::red\n",
+        "\n",
+        "    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+        "\n",
+        "  stderr ───\n",
+        "\n",
+        "    thread 'tests::red' (3609579) panicked at src/lib.rs:3:32:\n",
+        "    assertion `left == right` failed: random picker ids\n",
+        "      left: 1\n",
+        "     right: 2\n",
+        "    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+        "\n",
+        "────────────\n",
+        "     Summary [   0.005s] 1 test run: 0 passed, 1 failed, 0 skipped\n",
+        "        FAIL [   0.004s] (1/1) warnfail tests::red\n",
+        "error: test run failed\n",
+    );
+    /// Real `cargo nextest run` stderr from the coloured run. Stdout was empty.
+    const WARN_FAIL_NEXTEST_COLOUR_STDERR: &str = concat!(
+        "\x1b[1m\x1b[33mwarning\x1b[0m\x1b[1m: unused variable: `unused`\x1b[0m\n",
+        " \x1b[1m\x1b[94m--> \x1b[0msrc/lib.rs:1:25\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "\x1b[1m\x1b[94m1\x1b[0m \x1b[1m\x1b[94m|\x1b[0m pub fn f() -> u32 { let unused = 3; 1 }\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m                         \x1b[1m\x1b[33m^^^^^^\x1b[0m \x1b[1m\x1b[33mhelp: if this is intentional, prefix it with an underscore: `_unused`\x1b[0m\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "  \x1b[1m\x1b[94m= \x1b[0m\x1b[1mnote\x1b[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n",
+        "\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: `warnfail` (lib) generated 1 warning (run `cargo fix --lib -p warnfail` to apply 1 suggestion)\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: `warnfail` (lib test) generated 1 warning (1 duplicate)\n",
+        "\x1b[1m\x1b[92m    Finished\x1b[0m `test` profile [unoptimized + debuginfo] target(s) in 0.00s\n",
+        "────────────\n",
+        "\x1b[32;1m Nextest run\x1b[0m ID \x1b[1m50389bcb-d9bd-4579-9da2-4541399da5a3\x1b[0m with nextest profile: \x1b[1mdefault\x1b[0m\n",
+        "\x1b[32;1m    Starting\x1b[0m \x1b[1m1\x1b[0m test across \x1b[1m1\x1b[0m binary\n",
+        "\x1b[31;1m        FAIL\x1b[0m [   0.004s] (1/1) \x1b[35;1mwarnfail\x1b[0m \x1b[36mtests\x1b[0m\x1b[36m::\x1b[0m\x1b[34;1mred\x1b[0m\n",
+        "\x1b[31;1m \x1b[0m \x1b[31;1mstdout\x1b[0m \x1b[31;1m───\x1b[0m\n",
+        "\n",
+        "    running 1 test\n",
+        "    test tests::red ... FAILED\n",
+        "\n",
+        "    failures:\n",
+        "\n",
+        "    failures:\n",
+        "        tests::red\n",
+        "\n",
+        "    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+        "    \x1b[0m\n",
+        "\x1b[31;1m \x1b[0m \x1b[31;1mstderr\x1b[0m \x1b[31;1m───\x1b[0m\n",
+        "\n",
+        "    \x1b[0m\x1b[31;1mthread 'tests::red' (3609661) panicked at src/lib.rs:3:32:\x1b[0m\n",
+        "    \x1b[31;1massertion `left == right` failed: random picker ids\x1b[0m\n",
+        "      left: 1\n",
+        "     right: 2\n",
+        "    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\x1b[0m\n",
+        "\n",
+        "────────────\n",
+        "\x1b[31;1m     Summary\x1b[0m [   0.004s] \x1b[1m1\x1b[0m test run: \x1b[1m0\x1b[0m \x1b[32;1mpassed\x1b[0m, \x1b[1m1\x1b[0m \x1b[31;1mfailed\x1b[0m, \x1b[1m0\x1b[0m \x1b[33;1mskipped\x1b[0m\n",
+        "\x1b[31;1m        FAIL\x1b[0m [   0.004s] (1/1) \x1b[35;1mwarnfail\x1b[0m \x1b[36mtests\x1b[0m\x1b[36m::\x1b[0m\x1b[34;1mred\x1b[0m\n",
+        "\x1b[31;1merror\x1b[0m: test run failed\n",
+    );
+    /// Real coloured `cargo test` stderr for a coded compile error. Stdout was empty.
+    const CODED_ERROR_LIBTEST_COLOUR_STDERR: &str = concat!(
+        "\x1b[1m\x1b[92m   Compiling\x1b[0m code v0.1.0 (/work/code)\n",
+        "\x1b[1m\x1b[91merror[E0425]\x1b[0m\x1b[1m: cannot find value `missing` in this scope\x1b[0m\n",
+        " \x1b[1m\x1b[94m--> \x1b[0msrc/lib.rs:1:37\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "\x1b[1m\x1b[94m1\x1b[0m \x1b[1m\x1b[94m|\x1b[0m pub fn f() -> u32 { let unused = 3; missing }\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m                                     \x1b[1m\x1b[91m^^^^^^^\x1b[0m \x1b[1m\x1b[91mnot found in this scope\x1b[0m\n",
+        "\n",
+        "\x1b[1mFor more information about this error, try `rustc --explain E0425`.\x1b[0m\n",
+        "\x1b[1m\x1b[91merror\x1b[0m: could not compile `code` (lib) due to 1 previous error\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: build failed, waiting for other jobs to finish...\n",
+        "\x1b[1m\x1b[91merror\x1b[0m: could not compile `code` (lib test) due to 1 previous error\n",
+    );
+    /// Real uncoloured `cargo nextest run` stderr for a coded compile error.
+    const CODED_ERROR_NEXTEST_PLAIN_STDERR: &str = concat!(
+        "   Compiling code v0.1.0 (/work/code)\n",
+        "error[E0425]: cannot find value `missing` in this scope\n",
+        " --> src/lib.rs:1:37\n",
+        "  |\n",
+        "1 | pub fn f() -> u32 { let unused = 3; missing }\n",
+        "  |                                     ^^^^^^^ not found in this scope\n",
+        "\n",
+        "For more information about this error, try `rustc --explain E0425`.\n",
+        "error: could not compile `code` (lib) due to 1 previous error\n",
+        "warning: build failed, waiting for other jobs to finish...\n",
+        "error: could not compile `code` (lib test) due to 1 previous error\n",
+        "error: command `cargo '--color=never' test --no-run --message-format json-render-diagnostics` exited with code 101\n",
+    );
+    /// Real uncoloured `cargo test` stderr for an uncoded syntax error next to a warning.
+    const SYNTAX_ERROR_LIBTEST_PLAIN_STDERR: &str = concat!(
+        "   Compiling syntax v0.1.0 (/work/syntax)\n",
+        "error: expected expression, found `}`\n",
+        " --> src/lib.rs:2:26\n",
+        "  |\n",
+        "2 | pub fn g() -> u32 { 1 +  }\n",
+        "  |                          ^ expected expression\n",
+        "\n",
+        "warning: unused variable: `unused`\n",
+        " --> src/lib.rs:1:25\n",
+        "  |\n",
+        "1 | pub fn f() -> u32 { let unused = 3; 1 }\n",
+        "  |                         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_unused`\n",
+        "  |\n",
+        "  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n",
+        "\n",
+        "warning: `syntax` (lib test) generated 1 warning (1 duplicate)\n",
+        "error: could not compile `syntax` (lib test) due to 1 previous error; 1 warning emitted\n",
+        "warning: build failed, waiting for other jobs to finish...\n",
+        "warning: `syntax` (lib) generated 1 warning\n",
+        "error: could not compile `syntax` (lib) due to 1 previous error; 1 warning emitted\n",
+    );
+    /// Real coloured `cargo nextest run` stderr for the same syntax error.
+    const SYNTAX_ERROR_NEXTEST_COLOUR_STDERR: &str = concat!(
+        "\x1b[1m\x1b[92m   Compiling\x1b[0m syntax v0.1.0 (/work/syntax)\n",
+        "\x1b[1m\x1b[91merror\x1b[0m\x1b[1m: expected expression, found `}`\x1b[0m\n",
+        " \x1b[1m\x1b[94m--> \x1b[0msrc/lib.rs:2:26\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "\x1b[1m\x1b[94m2\x1b[0m \x1b[1m\x1b[94m|\x1b[0m pub fn g() -> u32 { 1 +  }\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m                          \x1b[1m\x1b[91m^\x1b[0m \x1b[1m\x1b[91mexpected expression\x1b[0m\n",
+        "\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m\x1b[1m: unused variable: `unused`\x1b[0m\n",
+        " \x1b[1m\x1b[94m--> \x1b[0msrc/lib.rs:1:25\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "\x1b[1m\x1b[94m1\x1b[0m \x1b[1m\x1b[94m|\x1b[0m pub fn f() -> u32 { let unused = 3; 1 }\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m                         \x1b[1m\x1b[33m^^^^^^\x1b[0m \x1b[1m\x1b[33mhelp: if this is intentional, prefix it with an underscore: `_unused`\x1b[0m\n",
+        "  \x1b[1m\x1b[94m|\x1b[0m\n",
+        "  \x1b[1m\x1b[94m= \x1b[0m\x1b[1mnote\x1b[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n",
+        "\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: `syntax` (lib) generated 1 warning\n",
+        "\x1b[1m\x1b[91merror\x1b[0m: could not compile `syntax` (lib) due to 1 previous error; 1 warning emitted\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: build failed, waiting for other jobs to finish...\n",
+        "\x1b[1m\x1b[33mwarning\x1b[0m: `syntax` (lib test) generated 1 warning (1 duplicate)\n",
+        "\x1b[1m\x1b[91merror\x1b[0m: could not compile `syntax` (lib test) due to 1 previous error; 1 warning emitted\n",
+        "\x1b[31;1merror\x1b[0m: command `\x1b[1mcargo '--color=always' test --no-run --message-format json-render-diagnostics\x1b[0m` exited with code \x1b[1m101\x1b[0m\n",
+    );
+    #[test]
+    fn warning_then_failing_test_is_not_a_build_failure() {
+        let runs = [
+            (
+                WARN_FAIL_LIBTEST_PLAIN_STDOUT,
+                WARN_FAIL_LIBTEST_PLAIN_STDERR,
+            ),
+            (
+                WARN_FAIL_LIBTEST_COLOUR_STDOUT,
+                WARN_FAIL_LIBTEST_COLOUR_STDERR,
+            ),
+            ("", WARN_FAIL_NEXTEST_PLAIN_STDERR),
+            ("", WARN_FAIL_NEXTEST_COLOUR_STDERR),
+        ];
+        for (stdout, stderr) in runs {
+            assert!(!looks_like_build_failure(stdout, stderr), "{stderr}");
+        }
+    }
+
+    #[test]
+    fn warning_then_cargo_error_without_tests_is_not_a_build_failure() {
+        // Stdout can be lost or empty, so the span rule itself must reject
+        // a warning's span followed by an unrelated cargo error.
+        assert!(!looks_like_build_failure(
+            "",
+            WARN_FAIL_LIBTEST_PLAIN_STDERR
+        ));
+        assert!(!looks_like_build_failure(
+            "",
+            WARN_FAIL_LIBTEST_COLOUR_STDERR
+        ));
+    }
+
+    #[test]
+    fn real_compile_errors_are_build_failures() {
+        let outputs = [
+            CODED_ERROR_LIBTEST_COLOUR_STDERR,
+            CODED_ERROR_NEXTEST_PLAIN_STDERR,
+            SYNTAX_ERROR_LIBTEST_PLAIN_STDERR,
+            SYNTAX_ERROR_NEXTEST_COLOUR_STDERR,
+        ];
+        for output in outputs {
+            assert!(looks_like_build_failure("", output), "missed: {output}");
+        }
+    }
+
+    #[test]
+    fn each_compile_error_shape_alone_is_a_build_failure() {
+        let coded = "error[E0425]: cannot find value `missing` in this scope\n";
+        assert!(looks_like_build_failure("", coded));
+        let summary = "error: could not compile `code` (lib) due to 1 previous error\n";
+        assert!(looks_like_build_failure("", summary));
+        let spanned = "error: expected expression, found `}`\n\n --> src/lib.rs:2:26\n  |\n";
+        assert!(looks_like_build_failure("", spanned));
+    }
+
+    #[test]
+    fn compile_error_shapes_need_their_own_line() {
+        let span_elsewhere = "error: expected expression\nnote: unrelated\n --> src/lib.rs:2:26\n";
+        assert!(!looks_like_build_failure("", span_elsewhere));
+        let indented = "    error[E0425]: cannot find value\n    error: could not compile `x`\n";
+        assert!(!looks_like_build_failure("", indented));
+    }
+
+    #[test]
+    fn compile_error_printed_by_a_running_test_is_not_a_build_failure() {
+        let stdout = "running 1 test\ntest ui ... FAILED\n\n---- ui stdout ----\nerror[E0425]: cannot find value `x`\n --> tests/ui/x.rs:1:1\nerror: could not compile `ui`\n";
+        assert!(!looks_like_build_failure(stdout, ""));
+    }
+
+    #[test]
+    fn malformed_control_sequence_stops_at_a_newline() {
+        assert_eq!(strip_ansi_escapes("a\x1b[\nerror: b"), "a\nerror: b");
+        assert_eq!(strip_ansi_escapes("a\x1b[31\u{7}b"), "a\u{7}b");
+        let guard =
+            "    Starting 1 test across 1 binary\n    error: failed to download the picker page\n";
+        assert!(!looks_like_build_failure("", guard));
+        let stray = format!("warning: build note\x1b[\n{guard}");
+        assert!(!looks_like_build_failure("", &stray));
+    }
+
+    #[test]
+    fn character_set_designators_are_removed() {
+        assert_eq!(strip_ansi_escapes("\x1b(Bx\x1b)0y"), "xy");
+        let guard = "\x1b(B    Starting 1 test across 1 binary\n    error: failed to download the picker page\n";
+        assert!(!looks_like_build_failure("", guard));
     }
 
     #[test]
