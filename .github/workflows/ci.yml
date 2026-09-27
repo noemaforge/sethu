@@ -2,7 +2,19 @@ name: gate
 
 on:
   push:
+    branches:
+      - '**'
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - '.gitignore'
+      - '.github/workflows/deploy-docs.yml'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - '.gitignore'
+      - '.github/workflows/deploy-docs.yml'
 
 jobs:
   gate:
