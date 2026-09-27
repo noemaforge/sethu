@@ -1,0 +1,59 @@
+---
+title: Install and first run
+description: Install Sethu and its helpers, then confirm every capability.
+---
+
+Install three binaries. Sethu migrates code. Vimanam diffs specs. Nextest runs verification checks.
+
+## Key terms
+
+**Bob pack.** Files that `sethu install` copies into a consumer repository. Example: the pack creates the `/api-upgrade` command, its skill references, and the migrator mode under `.bob/`.
+
+**Capability report.** Output of `sethu capabilities` that lists tool versions and command status. Example: it shows `vimanam 1.3.0 (supported)` when a new enough Vimanam sits on PATH.
+
+## Steps
+
+1. Install the published CLI from crates.io with Rust 1.96 or later:
+   ```bash
+   cargo install sethu --locked
+   ```
+2. Install Vimanam separately. Sethu requires version 1.3.0 or later on PATH:
+   ```bash
+   cargo install vimanam
+   ```
+3. Install the verification runner:
+   ```bash
+   cargo install cargo-nextest
+   ```
+4. Confirm the setup:
+   ```bash
+   sethu capabilities
+   ```
+
+Expect one line per command, each marked available. A missing helper shows up as unavailable with its version.
+
+## Version rules
+
+| Helper | Requirement | Notes |
+|---|---|---|
+| Vimanam | 1.3.0 or later | A separate binary on PATH. `cargo install vimanam` requests the current release unless pinned. |
+| cargo-nextest | Any recent release | Verification runs need it. |
+| git | Any recent release | Attempt binding and report provenance need it. |
+
+Sethu never downloads or updates Vimanam. Install or upgrade that binary yourself.
+
+`sethu install` installs the Bob pack into a consumer repository. It never installs Vimanam.
+
+## Source build
+
+Binary archives for Linux, macOS, and Windows ship with each GitHub release, with SHA-256 checksums. Each archive includes the Bob pack. Archives never include Vimanam or cargo-nextest.
+
+To build from source instead, clone the repository and run:
+
+```bash
+git clone https://github.com/noemaforge/sethu
+cd sethu
+cargo build --release
+```
+
+The binary lands at `target/release/sethu`. Copy it onto PATH.

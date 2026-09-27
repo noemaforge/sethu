@@ -1,0 +1,59 @@
+---
+title: Limits and provenance
+description: Contracts Sethu keeps, cases it refuses, and sources behind the demo.
+---
+
+Sethu builds on Vimanam and never grows its own copy of what Vimanam provides. This page lists the contracts, the refused cases, and the sources.
+
+## Key terms
+
+**Provenance.** The recorded origin of every input: spec hashes, release commits, and tool versions. Example: the report names the Immich release commits and the Vimanam version behind the capture.
+
+**Capture.** The immutable Vimanam output stored at `init` time. Example: later commands recompute the required set from this file, never from a fresh diff.
+
+## Vimanam contract
+
+Vimanam runs as a separate binary through `src/vimanam.rs` and nothing else. Sethu reads full stdout and treats exit 3 as output, because Vimanam exits 3 under `--fail-on-breaking` after writing the full report.
+
+Vimanam records stay stored unchanged. Sethu never recomputes a change ID or a severity.
+
+A bug or gap in Vimanam becomes an upstream issue with a version, a smallest reproduction, and expected behavior. Sethu takes a workaround when one exists and records the issue beside it. It never patches Vimanam from here.
+
+## Unsupported cases
+
+| Case | Sethu behavior |
+|---|---|
+| Free text as sole evidence | Rejected. Free text never satisfies verification. |
+| Unsupported construct in a check | Blocks the claim instead of passing it. |
+| Hand-edited ledger | Revalidated by `check`, since files can change by hand. |
+| Scan ranking | Stays a heuristic. Candidates carry provenance and explicit limits. |
+| Unverified change | Never claimed as passed. Reports mark missing evidence openly. |
+
+## Local-only execution
+
+The stub binds to `127.0.0.1` only. Sethu makes no other network call.
+
+Every state write is atomic. Sethu writes a temp file, then renames it. A capture stays immutable once written.
+
+Output stays deterministic. Diagnostics go to stderr.
+
+The installer never overwrites a file it does not own. It merges modes by `slug`.
+
+## Pinned fixture sources
+
+The demo specs are unmodified upstream files from `immich-app/immich` under AGPL-3.0-only:
+
+| File | Release | Commit |
+|---|---|---|
+| `old.json` | v1.116.2 | `8bbcd5c31e4a227f92864ae2977c4033bc0c50b7` |
+| `new.json` | v1.117.0 | `6b8462402ba2fa48d4ddbce924b5e3e0987155eb` |
+
+Copies live under `tests/fixtures/immich/`, with hashes in the NOTICE beside them. The demo consumer lives at [noemaforge/sethu-demo-picker](https://github.com/noemaforge/sethu-demo-picker).
+
+## Licences
+
+Sethu carries Apache-2.0. The pinned Immich specs carry AGPL-3.0-only and stay unmodified.
+
+## Cost disclosure
+
+The hackathon account holds 40 Bobcoins with no top-ups. No agent spends them. Only the person runs Bob IDE. No migration step needs Bobcoins to pass its checks.

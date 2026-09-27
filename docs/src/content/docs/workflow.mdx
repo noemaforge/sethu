@@ -1,0 +1,80 @@
+---
+title: Workflow and evidence
+description: Ledger, verification runs, and the line between accounting and readiness.
+---
+
+Sethu refuses to close a change without evidence. Every ledger entry points at a run, a file, or a recorded decision.
+
+## Key terms
+
+**Ledger.** The outcome file that holds one disposition per required change. Example: the ledger holds `fixed_and_verified` for the random search change and `decision_required` for the paging item.
+
+**Disposition.** One recorded outcome plus its evidence references. Example: `record <id> --outcome no_usage_found --evidence src/search.rs:42` claims the change misses the inspected scope and points at the file that shows it.
+
+**Freeze.** A recorded hash of the verification harness taken before repair starts. Example: `verify --freeze` stores the hash, and later runs fail when live harness files drift from it.
+
+**Accounting.** The question of whether every required change carries a valid disposition with evidence. Example: all 27 Immich changes recorded means accounting is complete.
+
+**Readiness.** The question of whether every change stands resolved, with no open decision and no stale run. Example: one `decision_required` paging item means accounting passes while readiness fails.
+
+## Steps
+
+1. Install the pack, then capture the pair:
+   ```bash
+   sethu install ./consumer
+   sethu init --repo ./consumer old.json new.json
+   ```
+2. Inspect the required set and one focused change:
+   ```bash
+   sethu changes
+   sethu context <change-id>
+   ```
+3. Freeze the harness before repair work starts:
+   ```bash
+   sethu verify --freeze
+   ```
+4. Repair the code, then run the checks:
+   ```bash
+   sethu verify
+   ```
+5. Record each outcome with evidence that names a run, a file, or a decision:
+   ```bash
+   sethu record <change-id> --outcome fixed_and_verified --evidence run:<run-id>/<check>
+   ```
+6. Validate the ledger and readiness separately:
+   ```bash
+   sethu check
+   sethu check --require-ready
+   ```
+7. Publish the validated state:
+   ```bash
+   sethu report --out ./report
+   ```
+
+## How verification earns a claim
+
+A regression check passes only when the test result and the stub trace agree. Two fields in the manifest set the bar:
+
+| Field | What it demands |
+|---|---|
+| `expected_diagnostic` | The failure message that the red stage must show, verbatim or by regex |
+| `expected_exchange` | The stub exchanges the stage must show, each validated against the served spec version |
+
+The stub serves fixed fixture scenarios on `127.0.0.1`. It validates incoming requests against the selected spec and answers from declared fixtures. An unexpected route returns status 599 and lands in the request trace, so it can never pass as an ordinary 404.
+
+Only `sethu record` writes the ledger. `sethu check` validates it again, since files can be edited by hand. Free text alone never satisfies verification. An unsupported construct blocks the claim instead of passing it.
+
+## A passing claim and a blocked claim
+
+A passing claim names a run whose JUnit cases passed and whose trace shows the expected exchanges. Example: `run:abc123/random-new` with green cases and the array response in the trace earns `fixed_and_verified`.
+
+A blocked claim names evidence that cannot satisfy verification. Example: a note that says the fix looks right, with no run reference, keeps the change unresolved. A `decision_required` entry with a recorded product choice stays visible until a human decides.
+
+## Accounting is not readiness
+
+| Question | Command | Failing shape |
+|---|---|---|
+| Is every change recorded with evidence. | `sethu check` | A missing disposition, or evidence that names no run, file, or decision. |
+| Is every change resolved. | `sethu check --require-ready` | An open `decision_required` item, or a run recorded against a moved commit. |
+
+An incomplete ledger fails the command. `--require-ready` additionally fails on unresolved items. Missing or stale evidence appears marked in the report, never silently dropped.

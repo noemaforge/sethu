@@ -1,0 +1,40 @@
+---
+title: Start here
+description: Meet Vimanam, Bob IDE, and Sethu through one real Immich change.
+---
+
+Sethu traces OpenAPI changes into a consumer application, repairs the affected code, and records evidence that an independent checker can validate.
+
+Three tools share the work. Each one owns a distinct step.
+
+| Tool | Role | Example |
+|---|---|---|
+| Vimanam | Creates the contract diff from two specs | Reports that `POST /search/random` changed its success response |
+| Bob IDE | Changes consumer code through `/api-upgrade` | Gives random search its own parser and leaves the shared parser alone |
+| Sethu | Checks facts and evidence around the change | Refuses to close the paging decision without a recorded human choice |
+
+## One concrete change
+
+Immich v1.117.0 changes `POST /search/random`. Its success response moves from `SearchResponseDto` (with `assets.items`) to an array of `AssetResponseDto`.
+
+Vimanam creates this diff. Bob IDE changes the consumer. Sethu commands check the evidence.
+
+## Key terms
+
+**Contract diff.** Vimanam output that lists every change between two specs. Example: the diff lists 27 required changes across 4 operations for the pinned Immich pair.
+
+**Change record.** One entry in that diff, with a stable ID and severity. Example: the random search response change carries an operation origin, because the old component still serves other operations.
+
+**Migration attempt.** One bound run of `sethu init` for a spec pair, a consumer commit, and a scope. Example: an attempt binds the v1.116.2 to v1.117.0 pair to the picker checkout.
+
+## First steps
+
+1. Install the tools by following [Install and first run](/install/).
+2. Confirm the setup with the capability command:
+   ```bash
+   sethu capabilities
+   ```
+3. Read the [Immich walkthrough](/walkthrough/) to see the full sequence from `init` to `report`.
+4. Look up any flag in the [Command reference](/commands/).
+
+The [workflow page](/workflow/) explains ledgers, verification runs, and the difference between accounting and readiness.

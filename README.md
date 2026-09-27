@@ -24,6 +24,10 @@ The workflow runs inside Bob IDE. The developer invokes `/api-upgrade OLD NEW` t
 
 Run `sethu <command> --help` for flags. Run `sethu capabilities` to confirm the tool setup before a migration.
 
+## Documentation
+
+The [Sethu documentation site](https://noemaforge.github.io/sethu/) covers first run, demo, workflow, commands, and limits.
+
 ## Installation
 
 Install the published CLI from crates.io with Rust 1.96 or later.
@@ -73,7 +77,7 @@ State lives under `.sethu/` in the consumer repository. It holds the spec pair, 
 
 The demo upgrades a small photo picker from Immich v1.116.2 to v1.117.0. The picker reads random, smart, and metadata search through one shared response parser and collects asset IDs.
 
-POST `/search/random` changes its success response from `SearchResponseDto` to an array of `AssetResponseDto`. The typed decode of the new array into the old shape fails, so the random picker test fails against the new fixtures with its expected message. The correct repair gives random search its own path and leaves the shared parser alone. Guard checks cover smart and metadata search, and they pass in every stage.
+POST `/search/random` changes its success response from `SearchResponseDto` to an array of `AssetResponseDto`. The typed decode of the new array into the old shape fails. The random picker test then fails against the new fixtures with its expected message. The correct repair gives random search its own path and leaves the shared parser alone. Guard checks cover smart and metadata search, and they pass in every stage.
 
 The old random search request sends `page`. The new contract drops paging for random search, so the picker keeps an open product decision about its next-page behaviour. That item stays `decision_required` and blocks readiness.
 
