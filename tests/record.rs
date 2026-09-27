@@ -4,7 +4,8 @@
 //! init` on the pinned specs, then drive `record` with the working
 //! directory set to that repository. Live tests need the released diff
 //! binary on PATH and skip with a named reason without it. The demo
-//! matrix test also skips when `SETHU_DEMO_REPO` is unset. Refusals
+//! matrix test also skips when `SETHU_DEMO_REPO` is unset. Under CI
+//! either missing prerequisite fails the test instead. Refusals
 //! must change nothing, so failing cases assert that no ledger file
 //! was written. Tests never touch the real home directory.
 
@@ -37,11 +38,13 @@ fn vimanam_available() -> bool {
 }
 
 /// Skip the calling test with a named reason when the binary is absent.
+///
+/// Under CI the absence fails the test instead of skipping it.
 fn need_vimanam(test_name: &str) -> bool {
     if vimanam_available() {
         true
     } else {
-        eprintln!("SKIP {test_name}: `vimanam` is not on PATH");
+        common::skip(test_name, "`vimanam` is not on PATH");
         false
     }
 }

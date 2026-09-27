@@ -4,6 +4,8 @@
 //! variable `SETHU_DEMO_REPO` names it as a local path or a git URL.
 //! Tests that need it skip with a named reason when the variable is
 //! unset or empty, so a plain test run passes on a fresh clone.
+//! Under CI the same condition fails the test instead. A skipped test
+//! counts as a pass, so a silent skip there would hide the workflow.
 
 use std::path::{Path, PathBuf};
 
@@ -13,12 +15,43 @@ pub const DEMO_REPO_ENV: &str = "SETHU_DEMO_REPO";
 /// Reviewed demo consumer commit every test starts from.
 pub const DEMO_COMMIT: &str = "1577abbecb68e36b4064a5e5d9447c267aa1b415";
 
+/// Environment variable that CI runners set to mark an automated build.
+pub const CI_ENV: &str = "CI";
+
+/// Report whether the tests run under CI.
+///
+/// GitHub Actions and most other runners set `CI=true`. An empty value,
+/// `false` or `0` counts as a local run.
+pub fn running_in_ci() -> bool {
+    std::env::var(CI_ENV)
+        .map(|value| {
+            let value = value.trim();
+            !value.is_empty() && value != "false" && value != "0"
+        })
+        .unwrap_or(false)
+}
+
+/// Skip the calling test with a named reason, or fail it under CI.
+///
+/// A local run prints a `SKIP` line to stderr and the caller returns
+/// early. Under CI the test panics with the same reason, since nextest
+/// reports an early return as a pass and hides its stderr.
+pub fn skip(test_name: &str, reason: &str) {
+    assert!(
+        !running_in_ci(),
+        "{test_name} cannot skip under CI: {reason}. Provide the missing prerequisite to the test step."
+    );
+    eprintln!("SKIP {test_name}: {reason}");
+}
+
 /// Resolved location of the demo consumer repository.
 pub struct DemoRepo {
     source: String,
 }
 
 /// Resolve the demo consumer, or skip the calling test with a named reason.
+///
+/// Under CI a missing variable fails the test through [`skip`].
 ///
 /// A value naming an existing local directory is made absolute, since
 /// the clone runs from a scratch directory. Any other value passes to
@@ -27,7 +60,10 @@ pub fn demo_repo(test_name: &str) -> Option<DemoRepo> {
     let value = std::env::var(DEMO_REPO_ENV).unwrap_or_default();
     let value = value.trim();
     if value.is_empty() {
-        eprintln!("SKIP {test_name}: `{DEMO_REPO_ENV}` is not set to the demo consumer repository");
+        skip(
+            test_name,
+            &format!("`{DEMO_REPO_ENV}` is not set to the demo consumer repository"),
+        );
         return None;
     }
     let local = PathBuf::from(value);

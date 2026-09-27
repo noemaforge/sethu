@@ -7,7 +7,7 @@
 //! run uses real stub instances on loopback and fixture scenarios
 //! validated against the pinned specs. Nothing writes to the source
 //! demo checkout. Tests that clone it skip with a named reason when
-//! `SETHU_DEMO_REPO` is unset. Each heavy test builds under its own
+//! `SETHU_DEMO_REPO` is unset, and fail instead under CI. Each heavy test builds under its own
 //! scratch root behind one lock, so repeated cargo builds within a
 //! test reuse compiled dependencies.
 

@@ -8,7 +8,8 @@
 //! repair to a failed guard, and finally the blocked check and the
 //! report. The source demo checkout is never modified. The test needs
 //! the released diff binary on PATH and the demo consumer named by
-//! `SETHU_DEMO_REPO`. It skips with a named reason without either.
+//! `SETHU_DEMO_REPO`. It skips with a named reason without either,
+//! and fails instead under CI.
 //! One consumer copy serves the whole script.
 
 use std::path::{Path, PathBuf};
@@ -633,7 +634,7 @@ fn full_workflow_without_assistance() {
         return;
     };
     if !vimanam_available() {
-        eprintln!("SKIP {TEST_NAME}: `vimanam` is not on PATH");
+        common::skip(TEST_NAME, "`vimanam` is not on PATH");
         return;
     }
     let _guard = HEAVY.lock().expect("hold the workflow lock");
