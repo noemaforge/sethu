@@ -586,24 +586,30 @@ pub fn looks_like_build_failure(stdout: &str, stderr: &str) -> bool {
     if tests_started(&combined) {
         return false;
     }
-    looks_like_compile_failure(&combined) || looks_like_resolution_failure(&combined)
+    looks_like_compile_failure(&combined) || looks_like_cargo_build_failure(&combined)
 }
 
-/// Report whether any test binary started running.
+/// Report whether a test runner started running.
 ///
 /// Libtest prints `running N tests` and nextest prints `Starting N
 /// tests` once tests begin. Cargo builds every test target before it
 /// runs any, so neither line can follow a failed build or a failed
-/// resolution. Anything that looks like a cargo error after that point
-/// came from a test.
+/// resolution. Build scripts can print similar lines, which cargo
+/// indents while relaying their output.
 fn tests_started(output: &str) -> bool {
     output.lines().any(|line| {
-        let line = line.trim_start();
-        let rest = line
-            .strip_prefix("running ")
-            .or_else(|| line.strip_prefix("Starting "));
-        rest.and_then(|rest| rest.split_whitespace().next())
-            .is_some_and(|count| count.parse::<u64>().is_ok())
+        let line = if let Some(line) = line.strip_prefix("    Starting ") {
+            line
+        } else if let Some(line) = line.strip_prefix("running ") {
+            line
+        } else {
+            return false;
+        };
+        let mut words = line.split_whitespace();
+        let count = words.next();
+        let unit = words.next();
+        count.is_some_and(|count| count.parse::<u64>().is_ok())
+            && unit.is_some_and(|unit| unit == "test" || unit == "tests")
     })
 }
 
@@ -686,19 +692,22 @@ fn strip_ansi_escapes(text: &str) -> String {
     out
 }
 
-/// Cargo's own wording when it cannot resolve or fetch a dependency.
+/// Cargo's own wording for failures that stop a build before tests run.
 ///
 /// Each phrase opens an `error: ` line or a line of the `Caused by:`
 /// chain beneath one.
-const RESOLUTION_FAILURES: [&str; 5] = [
+const CARGO_BUILD_FAILURES: [&str; 8] = [
     "no matching package named",
     "failed to select a version for",
     "failed to load source for dependency",
     "failed to download",
     "failed to get `",
+    "failed to run custom build command",
+    "failed to parse manifest",
+    "could not find",
 ];
 
-/// Report whether cargo stopped while resolving or fetching dependencies.
+/// Report whether cargo stopped before test execution.
 ///
 /// A test that prints one of cargo's phrases must not read as a build
 /// failure. Only a line that starts with `error: ` or sits in the
@@ -706,7 +715,7 @@ const RESOLUTION_FAILURES: [&str; 5] = [
 /// where tests started. Both matches rely on the caller having removed
 /// colour escapes, since a coloured line does not start with these
 /// prefixes.
-fn looks_like_resolution_failure(output: &str) -> bool {
+fn looks_like_cargo_build_failure(output: &str) -> bool {
     let mut in_cause_chain = false;
     for line in output.lines() {
         let trimmed = line.trim_start();
@@ -728,7 +737,7 @@ fn looks_like_resolution_failure(output: &str) -> bool {
             None
         };
         if body.is_some_and(|body| {
-            RESOLUTION_FAILURES
+            CARGO_BUILD_FAILURES
                 .iter()
                 .any(|phrase| body.starts_with(phrase))
         }) {
@@ -958,6 +967,18 @@ help: if this error is too confusing you may wish to retry without `--offline`
             "error: failed to get `nope` as a dependency of package `consumer v0.1.0 (/work/consumer)`\n\nCaused by:\n  failed to load source for dependency `nope`\n\nCaused by:\n  unable to update /work/nope\n",
             "error: failed to download from `https://static.crates.io/api/v1/crates/serde/1.0.228/download`\n\nCaused by:\n  [6] Couldn't resolve host name\n",
             "error: failed to fetch `https://github.com/rust-lang/crates.io-index`\n\nCaused by:\n  failed to download `serde v1.0.228`\n",
+        ];
+        for output in outputs {
+            assert!(looks_like_build_failure("", output), "missed: {output}");
+        }
+    }
+
+    #[test]
+    fn pre_test_cargo_errors_cover_scripts_and_manifests() {
+        let outputs = [
+            "error: failed to run custom build command for `x v0.1.0 (/work/x)`\n\nCaused by:\n  process didn't exit successfully: `/work/target/debug/build/x-1/build-script-build` (exit status: 101)\n  --- stderr\n  running 3 tests\n",
+            "error: failed to parse manifest at `/work/Cargo.toml`\n\nCaused by:\n  rust-version 9.0 is incompatible with the version (1.56.0) required by the specified edition (2021)\n",
+            "error: could not find `Cargo.toml` in `/work/project` or any parent directory\n",
         ];
         for output in outputs {
             assert!(looks_like_build_failure("", output), "missed: {output}");
@@ -1305,6 +1326,22 @@ help: if this error is too confusing you may wish to retry without `--offline`
     }
 
     #[test]
+    fn test_runner_guard_requires_a_numeric_test_count() {
+        let output = "    Starting many tests\nerror[E0425]: cannot find value\n";
+        assert!(looks_like_build_failure("", output));
+        let output = "    Starting the build\nerror[E0425]: cannot find value\n";
+        assert!(looks_like_build_failure("", output));
+        let output = "  Starting the build\nerror[E0425]: cannot find value\n";
+        assert!(looks_like_build_failure("", output));
+    }
+
+    #[test]
+    fn span_must_start_its_own_line() {
+        let output = "error: expected expression\nnote: see --> src/lib.rs:1:1\n";
+        assert!(!looks_like_build_failure("", output));
+    }
+
+    #[test]
     fn compile_error_printed_by_a_running_test_is_not_a_build_failure() {
         let stdout = "running 1 test\ntest ui ... FAILED\n\n---- ui stdout ----\nerror[E0425]: cannot find value `x`\n --> tests/ui/x.rs:1:1\nerror: could not compile `ui`\n";
         assert!(!looks_like_build_failure(stdout, ""));
@@ -1319,6 +1356,11 @@ help: if this error is too confusing you may wish to retry without `--offline`
         assert!(!looks_like_build_failure("", guard));
         let stray = format!("warning: build note\x1b[\n{guard}");
         assert!(!looks_like_build_failure("", &stray));
+    }
+
+    #[test]
+    fn csi_intermediate_bytes_are_removed() {
+        assert_eq!(strip_ansi_escapes("a\x1b[!pb"), "ab");
     }
 
     #[test]
