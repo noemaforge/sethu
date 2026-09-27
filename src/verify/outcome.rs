@@ -575,13 +575,79 @@ fn result_line(line: &str) -> Option<(String, bool)> {
 /// Report whether output shows the harness failed to build.
 ///
 /// A nonzero cargo exit with a compile error never counts as a test
-/// failure. It means the harness cannot run on this commit at all.
+/// failure. It means the harness cannot run on this commit at all. A
+/// dependency that cargo cannot resolve or fetch stops the build the
+/// same way, before anything compiles.
 pub fn looks_like_build_failure(stdout: &str, stderr: &str) -> bool {
     let combined = format!("{stdout}\n{stderr}");
     combined.contains("could not compile")
         || combined.contains("error: could not compile")
         || combined.contains("error[")
         || (combined.contains("error:") && combined.contains("--> "))
+        || looks_like_resolution_failure(&combined)
+}
+
+/// Cargo's own wording when it cannot resolve or fetch a dependency.
+///
+/// Each phrase opens an `error: ` line or a line of the `Caused by:`
+/// chain beneath one.
+const RESOLUTION_FAILURES: [&str; 5] = [
+    "no matching package named",
+    "failed to select a version for",
+    "failed to load source for dependency",
+    "failed to download",
+    "failed to get `",
+];
+
+/// Report whether cargo stopped while resolving or fetching dependencies.
+///
+/// A test that prints one of cargo's phrases must not read as a build
+/// failure. Only a line that starts with `error: ` or sits in the
+/// `Caused by:` chain counts, and only when no test binary started.
+/// Libtest prints `running N tests` and nextest prints `Starting N
+/// tests` once tests begin, and neither can happen after a failed
+/// resolution.
+fn looks_like_resolution_failure(output: &str) -> bool {
+    let tests_started = output.lines().any(|line| {
+        let line = line.trim_start();
+        let rest = line
+            .strip_prefix("running ")
+            .or_else(|| line.strip_prefix("Starting "));
+        rest.and_then(|rest| rest.split_whitespace().next())
+            .is_some_and(|count| count.parse::<u64>().is_ok())
+    });
+    if tests_started {
+        return false;
+    }
+    let mut in_cause_chain = false;
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "Caused by:" {
+            in_cause_chain = true;
+            continue;
+        }
+        let indented = trimmed.len() < line.len();
+        let body = if let Some(rest) = trimmed.strip_prefix("error: ") {
+            in_cause_chain = false;
+            Some(rest)
+        } else if in_cause_chain && indented {
+            Some(trimmed)
+        } else {
+            in_cause_chain = false;
+            None
+        };
+        if body.is_some_and(|body| {
+            RESOLUTION_FAILURES
+                .iter()
+                .any(|phrase| body.starts_with(phrase))
+        }) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -782,6 +848,80 @@ mod tests {
             .unwrap();
         assert!(!failed.passed);
         assert!(failed.output.contains("random picker ids"));
+    }
+
+    /// Cargo's stderr when an offline build meets a cold registry.
+    const OFFLINE_RESOLUTION_STDERR: &str = "error: no matching package named `reqwest` found
+location searched: crates.io index
+required by package `immich-consumer v0.1.0 (/work/consumer)`
+note: offline mode (via `--offline`) can sometimes cause surprising resolution failures
+help: if this error is too confusing you may wish to retry without `--offline`
+";
+
+    #[test]
+    fn offline_resolution_failure_is_a_build_failure() {
+        assert!(looks_like_build_failure("", OFFLINE_RESOLUTION_STDERR));
+    }
+
+    #[test]
+    fn each_resolution_phrase_is_a_build_failure() {
+        let outputs = [
+            "error: failed to select a version for the requirement `serde = \"=999.0.0\"`\ncandidate versions found which didn't match: 1.0.228\n",
+            "error: failed to get `nope` as a dependency of package `consumer v0.1.0 (/work/consumer)`\n\nCaused by:\n  failed to load source for dependency `nope`\n\nCaused by:\n  unable to update /work/nope\n",
+            "error: failed to download from `https://static.crates.io/api/v1/crates/serde/1.0.228/download`\n\nCaused by:\n  [6] Couldn't resolve host name\n",
+            "error: failed to fetch `https://github.com/rust-lang/crates.io-index`\n\nCaused by:\n  failed to download `serde v1.0.228`\n",
+        ];
+        for output in outputs {
+            assert!(looks_like_build_failure("", output), "missed: {output}");
+        }
+    }
+
+    #[test]
+    fn failing_test_output_is_not_a_build_failure() {
+        let stdout = "running 1 test\ntest verify_random_picker ... FAILED\n\nfailures:\n\n---- verify_random_picker stdout ----\nthread 'verify_random_picker' panicked at tests/api.rs:12:5:\nassertion failed: random picker ids\n\nfailures:\n    verify_random_picker\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\n";
+        let stderr = "error: test failed, to rerun pass `--test api`\n";
+        assert!(!looks_like_build_failure(stdout, stderr));
+    }
+
+    #[test]
+    fn cargo_phrases_printed_by_a_running_test_are_not_a_build_failure() {
+        let stdout = "running 1 test\ntest verify_random_picker ... FAILED\n\n---- verify_random_picker stdout ----\nerror: no matching package named `reqwest` found\nfailed to download the random picker ids\n";
+        assert!(!looks_like_build_failure(stdout, ""));
+        let nextest = "    Starting 1 test across 1 binary\n        FAIL [   0.004s] consumer::api verify_random_picker\nerror: failed to download the picker page\n";
+        assert!(!looks_like_build_failure("", nextest));
+    }
+
+    #[test]
+    fn unanchored_cargo_phrase_is_not_a_build_failure() {
+        let stderr = "note: failed to download nothing\nwarning: no matching package named `x` in the lockfile comment\n";
+        assert!(!looks_like_build_failure("", stderr));
+    }
+
+    #[test]
+    fn offline_resolution_failure_on_the_red_stage_is_invalid_red() {
+        let check = regression_check();
+        let stderr = OFFLINE_RESOLUTION_STDERR.to_string();
+        let run = TestRun {
+            command: "cargo nextest run".to_string(),
+            parser: ParserKind::NextestJunit,
+            exit_code: Some(101),
+            signal: None,
+            timed_out: false,
+            build_failed: looks_like_build_failure("", &stderr),
+            cases: vec![],
+            stdout: String::new(),
+            stderr,
+        };
+        assert!(run.build_failed);
+        let verdict = evaluate(&check, true, &run, &[], &scenario_map());
+        let StageVerdict::InvalidRed(reason) = &verdict else {
+            panic!("expected an invalid red, got {verdict:?}");
+        };
+        assert!(reason.contains("did not build"), "reason: {reason}");
+        assert!(!reason.contains("did not run"), "reason: {reason}");
+        assert!(!stage_met(&verdict, true));
+        let green = evaluate(&check, false, &run, &[], &scenario_map());
+        assert!(!stage_met(&green, false));
     }
 
     #[test]
