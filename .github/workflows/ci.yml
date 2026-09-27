@@ -9,25 +9,134 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SETHU_DEMO_REPO: https://github.com/noemaforge/sethu-demo-picker
+      # Exact versions keep every run on the same tools and give the tool
+      # cache a key that changes only when one of these lines does. The
+      # checked-in fixtures come from Vimanam 1.3.0, the lowest release
+      # Sethu supports. Raise either version here deliberately.
+      VIMANAM_VERSION: 1.3.0
+      NEXTEST_VERSION: 0.9.146
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        # The action tags only a moving v1, which matched master here. The
+        # toolchain input names the channel, so the pin fixes the installer.
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
         with:
           toolchain: stable
-      - name: Install Vimanam
-        run: cargo install vimanam --version ">=1.3.0"
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
-      # Verify builds the demo consumer with CARGO_NET_OFFLINE set, so a
-      # fresh runner must hold the consumer's crates before the gate runs.
-      # The commit comes from the test helper so the two cannot drift.
-      - name: Fetch the demo consumer's dependencies
+          components: rustfmt, clippy
+      # Every build cache key names the runner image and the exact rustc
+      # build, so a new stable release or image starts a fresh build cache.
+      # The consumer commit comes from the test helper so the two cannot
+      # drift.
+      - name: Compute cache keys
+        id: keys
         run: |
           commit=$(sed -n 's/^pub const DEMO_COMMIT: &str = "\([0-9a-f]*\)";$/\1/p' tests/common/mod.rs)
           test -n "$commit"
+          image="${ImageOS:-unknown}-${RUNNER_ARCH}"
+          rust="${{ steps.toolchain.outputs.cachekey }}"
+          test -n "$rust"
+          lock="${{ hashFiles('Cargo.lock') }}"
+          test -n "$lock"
+          {
+            echo "tools-root=$HOME/.cargo-tools"
+            echo "demo-commit=$commit"
+            echo "image=$image"
+            echo "build-prefix=$image-rust-$rust-"
+            echo "build-key=$image-rust-$rust-lock-$lock-demo-$commit"
+          } >> "$GITHUB_OUTPUT"
+      # Installed binaries depend only on the image and their own versions.
+      # They are cached under a root of their own so the cache never holds
+      # the rustup proxies in the cargo home.
+      - name: Restore Vimanam and cargo-nextest
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo-tools
+          key: tools-${{ steps.keys.outputs.image }}-vimanam-${{ env.VIMANAM_VERSION }}-nextest-${{ env.NEXTEST_VERSION }}
+      - name: Install Vimanam and cargo-nextest
+        if: steps.tools.outputs.cache-hit != 'true'
+        env:
+          TOOLS_ROOT: ${{ steps.keys.outputs.tools-root }}
+        run: |
+          cargo install --root "$TOOLS_ROOT" vimanam --version "=$VIMANAM_VERSION"
+          cargo install --root "$TOOLS_ROOT" cargo-nextest --version "=$NEXTEST_VERSION" --locked
+      # A restored cache must hold exactly the pinned versions, and the gate
+      # script falls back to cargo test when nextest is missing, so both
+      # binaries are checked here before any test runs.
+      - name: Check the installed tools
+        env:
+          TOOLS_ROOT: ${{ steps.keys.outputs.tools-root }}
+        run: |
+          echo "$TOOLS_ROOT/bin" >> "$GITHUB_PATH"
+          vimanam=$("$TOOLS_ROOT/bin/vimanam" --version)
+          nextest=$("$TOOLS_ROOT/bin/cargo-nextest" nextest --version)
+          echo "$vimanam"
+          echo "$nextest"
+          test "$vimanam" = "vimanam $VIMANAM_VERSION"
+          case "$nextest" in "cargo-nextest $NEXTEST_VERSION "*) ;; *) exit 1 ;; esac
+      # Downloaded crates do not depend on the toolchain, so an older entry
+      # from any toolchain may seed a new one. The key still names the lock
+      # file and the consumer commit, so a changed crate set saves afresh.
+      - name: Restore the cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: registry-${{ steps.keys.outputs.build-key }}
+          restore-keys: |
+            registry-${{ steps.keys.outputs.image }}-
+      # The cache records the matched top-level paths and tar walks each one
+      # whole, so excluding a subdirectory of target works only at this
+      # level. The pattern takes every entry of target except tmp.
+      - name: Restore Sethu's build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/*
+            !target/tmp
+          key: target-${{ steps.keys.outputs.build-key }}
+          restore-keys: |
+            target-${{ steps.keys.outputs.build-prefix }}
+      # The heavy tests keep the demo consumer's shared build under
+      # target/tmp. It is restored and saved as a whole so its layout inside
+      # can change freely. Cargo fingerprints decide what rebuilds, so a
+      # stale entry costs time and never a wrong result.
+      - name: Restore the demo consumer's build
+        id: demo-build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/tmp
+          key: target-tmp-${{ steps.keys.outputs.build-key }}
+          restore-keys: |
+            target-tmp-${{ steps.keys.outputs.build-prefix }}
+      # Verify builds the demo consumer with CARGO_NET_OFFLINE set, so a
+      # fresh runner must hold the consumer's crates before the gate runs.
+      - name: Fetch the demo consumer's dependencies
+        env:
+          DEMO_COMMIT: ${{ steps.keys.outputs.demo-commit }}
+        run: |
           git clone -q "$SETHU_DEMO_REPO" "$RUNNER_TEMP/demo"
-          git -C "$RUNNER_TEMP/demo" checkout -q "$commit"
+          git -C "$RUNNER_TEMP/demo" checkout -q "$DEMO_COMMIT"
           cargo fetch --locked --manifest-path "$RUNNER_TEMP/demo/Cargo.toml"
       - name: Run the gate
         run: bash tools/check.sh
+      # Cargo creates target/tmp for every integration test build, even
+      # when no test writes there. Saving only a non-empty directory keeps
+      # an empty entry from claiming the key before the tests fill it.
+      - name: Check the demo consumer's build
+        id: demo-build-state
+        if: steps.demo-build.outputs.cache-hit != 'true'
+        run: |
+          if [ -d target/tmp ] && [ -n "$(ls -A target/tmp)" ]; then
+            echo "save=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Save the demo consumer's build
+        if: steps.demo-build-state.outputs.save == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/tmp
+          key: ${{ steps.demo-build.outputs.cache-primary-key }}
